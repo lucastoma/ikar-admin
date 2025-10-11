@@ -113,12 +113,13 @@ def index():
                 port = int(os.environ.get("FILEBROWSER_PORT", "8085"))
                 open_link = f"<a href='http://localhost:{port}/' target='_blank'>Open</a>"
         rows.append(
-            f"<tr><td><b>{name}</b></td>"
-            f"<td style='color:{status_color}'>{status_label}</td>"
+            f"<tr id='row-{name}'><td><b>{name}</b></td>"
+            f"<td id='status-{name}' data-status='{status_label}' data-available='{str(svc.available).lower()}' class='status-"
+            f"{'up' if running else ('missing' if not svc.available else 'down')}'>{status_label}</td>"
             f"<td>"
-            f"<form method='post' action='/ikaros/start/{name}?redirect=1' style='display:inline'>"
+            f"<form method='post' data-service='{name}' data-action='start' action='/ikaros/start/{name}?redirect=1' style='display:inline'>"
             f"<button type='submit'{disabled_attr}>Start</button></form>"
-            f"<form method='post' action='/ikaros/stop/{name}?redirect=1' style='display:inline;margin-left:6px'>"
+            f"<form method='post' data-service='{name}' data-action='stop' action='/ikaros/stop/{name}?redirect=1' style='display:inline;margin-left:6px'>"
             f"<button type='submit'{disabled_attr}>Stop</button></form>"
             f"<a href='/ikaros/logs/{name}' target='_blank' style='margin-left:10px'>Logs</a>"
             f"<span style='margin-left:10px'>{open_link}</span>"
@@ -137,6 +138,10 @@ def index():
             th, td {{ border: 1px solid #ddd; padding: 8px; }}
             th {{ background: #f5f5f5; text-align: left; }}
             button {{ padding: 4px 10px; }}
+            .status-up {{ color: green; }}
+            .status-down {{ color: red; }}
+            .status-missing {{ color: #666; }}
+            #toast {{ position: fixed; bottom: 20px; right: 20px; background: #333; color: #fff; padding: 8px 12px; border-radius: 4px; opacity: 0; transition: opacity 0.3s; }}
         </style>
     </head>
     <body>
@@ -147,6 +152,64 @@ def index():
             {''.join(rows)}
         </table>
         <p style='margin-top:16px'><a href='/ikaros/health' target='_blank'>Health (JSON)</a></p>
+        <div id='toast'></div>
+        <script>
+            const toastEl = document.getElementById('toast');
+            function showToast(msg) {{
+                toastEl.textContent = msg;
+                toastEl.style.opacity = '1';
+                clearTimeout(window.__ikarToastTimer);
+                window.__ikarToastTimer = setTimeout(() => {{ toastEl.style.opacity = '0'; }}, 2500);
+            }}
+            async function fetchStatus() {{
+                try {{
+                    const res = await fetch('/ikaros/status', {{ headers: {{ 'Accept': 'application/json' }} }});
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    Object.entries(data).forEach(([svc, running]) => {{
+                        const cell = document.getElementById('status-' + svc);
+                        if (!cell) return;
+                        const available = cell.dataset.available !== 'false';
+                        let label = available ? 'DOWN' : 'MISSING';
+                        let cls = available ? 'status-down' : 'status-missing';
+                        if (available && running) {{
+                            label = 'UP';
+                            cls = 'status-up';
+                        }}
+                        cell.textContent = label;
+                        cell.dataset.status = label;
+                        cell.className = cls;
+                    }});
+                }} catch (err) {{ console.error(err); }}
+            }}
+            document.querySelectorAll('form[data-service]').forEach(form => {{
+                form.addEventListener('submit', async ev => {{
+                    if (ev.defaultPrevented) return;
+                    ev.preventDefault();
+                    const svc = form.dataset.service;
+                    const formBtn = form.querySelector('button');
+                    formBtn.disabled = true;
+                    const url = new URL(form.action, window.location.origin);
+                    url.searchParams.set('redirect', '0');
+                        try {{
+                            const res = await fetch(url.toString(), {{ method: 'POST', headers: {{ 'Accept': 'application/json' }} }});
+                            if (res.ok) {{
+                                const data = await res.json();
+                                if (data.message) showToast(`${{svc}}: ${{data.message}}`);
+                            }} else {{
+                                showToast(`${{svc}}: request failed (${{res.status}})`);
+                            }}
+                        }} catch (err) {{
+                            showToast(`${{svc}}: error ${{err}}`);
+                        }} finally {{
+                            formBtn.disabled = false;
+                            await fetchStatus();
+                        }}
+                }});
+            }});
+            fetchStatus();
+            setInterval(fetchStatus, 8000);
+        </script>
     </body>
     </html>
     """

@@ -168,7 +168,7 @@ def build_services() -> Dict[str, Service]:
             "touch /workspace/filebrowser.log ; "
             "nohup "
             f"{filebrowser_bin} --port {FILEBROWSER_PORT} --address 0.0.0.0 --database /workspace/filebrowser.db "
-            "&> /workspace/filebrowser.log &"
+            "--root / &> /workspace/filebrowser.log &"
         )
 
     tailscale_available = shutil.which("tailscaled") is not None
