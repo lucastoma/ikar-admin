@@ -73,25 +73,36 @@ class Service:
     log_path: Optional[str] = None
     port: Optional[int] = None
     available: bool = True
+    systemd_unit: Optional[str] = None
 
     def is_running(self) -> bool:
         if not self.available:
             return False
+        # Prefer systemd when defined
+        if self.systemd_unit:
+            out = _run(f"sudo -n systemctl is-active {self.systemd_unit}")
+            if out.returncode == 0 and out.stdout.strip() == "active":
+                return True
+        # Process pattern checks
         for p in self.detect:
             if _cmdline_matches(p):
                 return True
-        # Only fallback to port check when no detect patterns were provided
-        if not self.detect and self.port is not None:
+        # Port fallback
+        if self.port is not None:
             return _is_port_open(self.port)
         return False
 
     def start(self) -> (bool, str):
         if not self.available:
             return False, "Service not installed"
-        if not self.start_cmd:
-            return False, "No start command configured"
         if self.is_running():
             return True, "Already running"
+        if self.systemd_unit:
+            res = _run(f"sudo -n systemctl start {self.systemd_unit}")
+            ok = _wait_for(self.is_running, True)
+            return (res.returncode == 0 and ok), res.stdout.strip() or "systemd start"
+        if not self.start_cmd:
+            return False, "No start command configured"
         _ensure_log_file(self.log_path)
         res = _run(self.start_cmd)
         success = res.returncode == 0
@@ -104,6 +115,10 @@ class Service:
     def stop(self) -> (bool, str):
         if not self.available:
             return False, "Service not installed"
+        if self.systemd_unit:
+            res = _run(f"sudo -n systemctl stop {self.systemd_unit}")
+            ok = _wait_for(self.is_running, False)
+            return (res.returncode == 0 and ok), "Stopped" if ok else (res.stdout.strip() or "Requested stop")
         if self.stop_patterns:
             ok = False
             for pat in self.stop_patterns:
@@ -135,18 +150,8 @@ def build_services() -> Dict[str, Service]:
 
     code_bin = _find_code_server_bin()
     code_log = "/workspace/code-server.log"
-    code_available = bool(code_bin)
-    code_cmd = None
-    if code_available:
-        os.makedirs("/workspace/.code-server/user-data", exist_ok=True)
-        os.makedirs("/workspace/.code-server/extensions", exist_ok=True)
-        code_cmd = (
-            f"nohup {code_bin} "
-            f"--bind-addr 0.0.0.0:{CODE_SERVER_PORT} --auth none "
-            f"--user-data-dir /workspace/.code-server/user-data "
-            f"--extensions-dir /workspace/.code-server/extensions /workspace "
-            f"&> {code_log} &"
-        )
+    code_available = bool(code_bin) or os.path.exists("/etc/systemd/system/code-server-ikar.service")
+    code_cmd = None  # prefer systemd
 
     comfy_available = os.path.exists("/workspace/ComfyUI/main.py")
     comfy_start_cmd = None
@@ -159,6 +164,9 @@ def build_services() -> Dict[str, Service]:
             f"--listen 0.0.0.0 --port {COMFYUI_PORT} --cpu "
             "&> /workspace/comfyui.log &"
         )
+    comfy_systemd = None
+    if os.path.exists("/etc/systemd/system/comfyui-ikar.service"):
+        comfy_systemd = "comfyui-ikar"
 
     filebrowser_bin = shutil.which("filebrowser") or "/workspace/filebrowser/filebrowser"
     filebrowser_available = os.path.exists(filebrowser_bin)
@@ -170,6 +178,9 @@ def build_services() -> Dict[str, Service]:
             f"{filebrowser_bin} --port {FILEBROWSER_PORT} --address 0.0.0.0 --database /workspace/filebrowser.db "
             "--root / &> /workspace/filebrowser.log &"
         )
+    filebrowser_systemd = None
+    if os.path.exists("/etc/systemd/system/filebrowser-ikar.service"):
+        filebrowser_systemd = "filebrowser-ikar"
 
     tailscale_available = shutil.which("tailscaled") is not None
     tailscale_start = None
@@ -188,15 +199,17 @@ def build_services() -> Dict[str, Service]:
             log_path="/workspace/comfyui.log",
             port=COMFYUI_PORT,
             available=comfy_available,
+            systemd_unit=comfy_systemd,
         ),
         "code": Service(
             name="code",
-            detect=["code-server .*--bind-addr", "code-server"],
+            detect=[],
             start_cmd=code_cmd,
-            stop_patterns=["code-server"],
+            stop_patterns=None,
             log_path=code_log,
             port=CODE_SERVER_PORT,
             available=code_available,
+            systemd_unit="code-server-ikar" if code_available else None,
         ),
         "filebrowser": Service(
             name="filebrowser",
@@ -206,6 +219,7 @@ def build_services() -> Dict[str, Service]:
             log_path="/workspace/filebrowser.log",
             port=FILEBROWSER_PORT,
             available=filebrowser_available,
+            systemd_unit=filebrowser_systemd,
         ),
         "tailscale": Service(
             name="tailscale",

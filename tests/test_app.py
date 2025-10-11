@@ -14,8 +14,10 @@ def test_index_html():
     html = r.text
     for name in ["comfyui", "code", "filebrowser", "tailscale"]:
         assert name in html
-    # buttons/links visible
-    assert "Start" in html and "Stop" in html and "Logs" in html
+    # controls visible
+    assert "Start" in html and "Stop" in html
+    assert "log-btn" in html
+    assert "log-container" in html
     # quick access links
     assert "http://localhost:18188/" in html
     assert "http://localhost:8445/" in html
@@ -85,11 +87,11 @@ def test_missing_service_marks_disabled(monkeypatch):
     from app import main as app_main
 
     class Stub:
-        def __init__(self, name, running, available):
+        def __init__(self, name, running, available, log_path="/tmp/log"):
             self.name = name
             self._running = running
             self.available = available
-            self.log_path = None
+            self.log_path = log_path
 
         def is_running(self):
             return self.available and self._running
@@ -102,8 +104,8 @@ def test_missing_service_marks_disabled(monkeypatch):
 
     services = {
         "comfyui": Stub("comfyui", running=True, available=True),
-        "filebrowser": Stub("filebrowser", running=False, available=False),
-        "tailscale": Stub("tailscale", running=True, available=True),
+        "filebrowser": Stub("filebrowser", running=False, available=False, log_path=None),
+        "tailscale": Stub("tailscale", running=True, available=True, log_path=None),
     }
 
     monkeypatch.setattr(app_main, "build_services", lambda: services)
