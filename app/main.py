@@ -1,6 +1,6 @@
 from fastapi import FastAPI, APIRouter, Response, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
-from .service_manager import build_services, tail_file, EVENT_LOG_PATH
+from . import service_manager as sm
 import os
 import shutil
 import json
@@ -33,7 +33,7 @@ def _port_open(p: int) -> bool:
 
 @router.get("/health")
 def health():
-    services = build_services()
+    services = sm.load_services_from_config(sm.CONFIG_PATH)
     return JSONResponse(
         {
             "ok": True,
@@ -51,28 +51,28 @@ def health():
 
 @router.get("/status")
 def status():
-    services = build_services()
+    services = sm.load_services_from_config(sm.CONFIG_PATH)
     return JSONResponse({k: v.is_running() for k, v in services.items()})
 
 
 @router.get("/logs/{svc}")
 def logs(svc: str, n: int = 200):
-    services = build_services()
+    services = sm.load_services_from_config(sm.CONFIG_PATH)
     s = services.get(svc)
     if not s:
         return PlainTextResponse("unknown service", status_code=404)
-    out = tail_file(s.log_path, n)
+    out = sm.tail_file(s.log_path, n)
     return PlainTextResponse(out)
 
 
 @router.get("/events")
 def events(n: int = 200):
-    return PlainTextResponse(tail_file(EVENT_LOG_PATH, n))
+    return PlainTextResponse(sm.tail_file(sm.EVENT_LOG_PATH, n))
 
 
 @router.post("/start/{svc}")
 def start(request: Request, svc: str, redirect: int = 0):
-    services = build_services()
+    services = sm.load_services_from_config(sm.CONFIG_PATH)
     s = services.get(svc)
     if not s:
         return JSONResponse({"ok": False, "error": "unknown service"}, status_code=404)
@@ -86,7 +86,7 @@ def start(request: Request, svc: str, redirect: int = 0):
 
 @router.post("/stop/{svc}")
 def stop(request: Request, svc: str, redirect: int = 0):
-    services = build_services()
+    services = sm.load_services_from_config(sm.CONFIG_PATH)
     s = services.get(svc)
     if not s:
         return JSONResponse({"ok": False, "error": "unknown service"}, status_code=404)
@@ -99,7 +99,7 @@ def stop(request: Request, svc: str, redirect: int = 0):
 
 @router.get("/")
 def index():
-    services = build_services()
+    services = sm.load_services_from_config(sm.CONFIG_PATH)
     rows = []
     for name, svc in services.items():
         running = svc.is_running()
@@ -107,16 +107,9 @@ def index():
         status_color = "green" if running else ("#666" if not svc.available else "red")
         disabled_attr = " disabled" if not svc.available else ""
         open_link = ""
-        if svc.available:
-            if name == "comfyui":
-                port = int(os.environ.get("COMFYUI_PORT", "18188"))
-                open_link = f"<a href='http://localhost:{port}/' target='_blank'>Open</a>"
-            elif name == "code":
-                port = int(os.environ.get("CODE_SERVER_PORT", "8445"))
-                open_link = f"<a href='http://localhost:{port}/' target='_blank'>Open</a>"
-            elif name == "filebrowser":
-                port = int(os.environ.get("FILEBROWSER_PORT", "8085"))
-                open_link = f"<a href='http://localhost:{port}/' target='_blank'>Open</a>"
+        if svc.available and svc.port:
+            open_link = f"<a href='http://localhost:{svc.port}/' target='_blank'>Open</a>"
+
         rows.append(
             f"<tr id='row-{name}'><td><b>{name}</b></td>"
             f"<td id='status-{name}' data-status='{status_label}' data-available='{str(svc.available).lower()}' class='status-"

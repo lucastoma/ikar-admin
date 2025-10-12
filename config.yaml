@@ -1,0 +1,51 @@
+services:
+  comfyui:
+    detect:
+      - "ComfyUI/main.py"
+      - "python .*ComfyUI/main.py"
+    start_cmd: >
+      PYTHONPATH=/home/dev/.local/lib/python3.12/site-packages:$PYTHONPATH
+      CUDA_VISIBLE_DEVICES=''
+      touch /workspace/comfyui.log ;
+      nohup /usr/local/bin/python /workspace/ComfyUI/main.py
+      --listen 0.0.0.0 --port ${COMFYUI_PORT:-18188} --cpu
+      &> /workspace/comfyui.log &
+    stop_patterns:
+      - "ComfyUI/main.py"
+    log_path: "/workspace/comfyui.log"
+    port: 18188
+    available: "os.path.exists('/workspace/ComfyUI/main.py')"
+    systemd_unit: "comfyui-ikar"
+
+  code:
+    detect: []
+    start_cmd: null
+    stop_patterns: null
+    log_path: "/workspace/code-server.log"
+    port: 8445
+    available: "shutil.which('code-server') or os.path.exists('/etc/systemd/system/code-server-ikar.service')"
+    systemd_unit: "code-server-ikar"
+
+  filebrowser:
+    detect:
+      - "filebrowser"
+    start_cmd: >
+      touch /workspace/filebrowser.log ;
+      nohup
+      ${FILEBROWSER_BIN:-/workspace/bin/filebrowser} --port ${FILEBROWSER_PORT:-8085} --address 0.0.0.0 --database /workspace/filebrowser.db
+      --root / &> /workspace/filebrowser.log &
+    stop_patterns:
+      - "filebrowser"
+    log_path: "/workspace/filebrowser.log"
+    port: 8085
+    available: "shutil.which('filebrowser') or os.path.exists('/workspace/bin/filebrowser')"
+    systemd_unit: "filebrowser-ikar"
+
+  tailscale:
+    detect:
+      - "tailscaled"
+    start_cmd: "(sudo -n tailscaled --state=/workspace/tailscale.state --tun=userspace-networking &>> /workspace/tailscale.log &)"
+    stop_patterns:
+      - "tailscaled"
+    log_path: "/workspace/tailscale.log"
+    available: "shutil.which('tailscaled') is not None"

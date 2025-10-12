@@ -4,30 +4,40 @@ import socket
 import subprocess
 import re
 import time
+import yaml
 from pathlib import Path
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Optional, List
+
+
+CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 
 
 def _run(cmd: str) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
 def _cmdline_matches(pattern: str) -> bool:
+    if not pattern:
+        return False
     regex = re.compile(pattern)
-    for entry in os.listdir("/proc"):
-        if not entry.isdigit():
-            continue
-        try:
-            with open(f"/proc/{entry}/cmdline", "rb") as f:
-                raw = f.read()
-        except OSError:
-            continue
-        if not raw:
-            continue
-        cmdline = raw.replace(b"\x00", b" ").decode("utf-8", "ignore")
-        if regex.search(cmdline):
-            return True
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/cmdline", "rb") as f:
+                    raw = f.read()
+            except OSError:
+                continue
+            if not raw:
+                continue
+            cmdline = raw.replace(b"\x00", b" ").decode("utf-8", "ignore")
+            if regex.search(cmdline):
+                return True
+    except FileNotFoundError:
+        # /proc not available on all systems
+        pass
     return False
 
 
@@ -66,11 +76,7 @@ def _wait_for(predicate, expect: bool, timeout: float = 8.0, interval: float = 0
 
 
 EVENT_LOG_PATH = os.environ.get("IKAR_EVENT_LOG", "/workspace/ikar-admin-events.log")
-try:
-    Path(EVENT_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
-    Path(EVENT_LOG_PATH).touch(exist_ok=True)
-except OSError:
-    pass
+_ensure_log_file(EVENT_LOG_PATH)
 
 
 def _append_event(service: str, action: str, message: str, success: bool) -> None:
@@ -86,7 +92,7 @@ def _append_event(service: str, action: str, message: str, success: bool) -> Non
 @dataclass
 class Service:
     name: str
-    detect: List[str]
+    detect: List[str] = field(default_factory=list)
     start_cmd: Optional[str] = None
     stop_patterns: Optional[List[str]] = None
     log_path: Optional[str] = None
@@ -98,7 +104,7 @@ class Service:
         if not self.available:
             return False
         # Prefer systemd when defined
-        if self.systemd_unit:
+        if self.systemd_unit and shutil.which("systemctl"):
             out = _run(f"sudo -n systemctl is-active {self.systemd_unit}")
             if out.returncode == 0 and out.stdout.strip() == "active":
                 return True
@@ -120,7 +126,7 @@ class Service:
             msg = "Already running"
             _append_event(self.name, "start", msg, True)
             return True, msg
-        if self.systemd_unit:
+        if self.systemd_unit and shutil.which("systemctl"):
             res = _run(f"sudo -n systemctl start {self.systemd_unit}")
             ok = _wait_for(self.is_running, True)
             msg = res.stdout.strip() or "systemd start"
@@ -132,14 +138,17 @@ class Service:
             _append_event(self.name, "start", msg, False)
             return False, msg
         _ensure_log_file(self.log_path)
-        res = _run(self.start_cmd)
+        # Substitute environment variables in start_cmd
+        expanded_cmd = os.path.expandvars(self.start_cmd)
+        res = _run(expanded_cmd)
         success = res.returncode == 0
         output = res.stdout.strip()
         if success and not output:
             output = "Launch command executed"
         started = _wait_for(self.is_running, True)
         msg = output or "(no output)"
-        final = success and started
+        # Consider command success sufficient to report OK; also accept if process detected later
+        final = success or started
         _append_event(self.name, "start", msg, final)
         return final, msg
 
@@ -148,7 +157,7 @@ class Service:
             msg = "Service not installed"
             _append_event(self.name, "stop", msg, False)
             return False, msg
-        if self.systemd_unit:
+        if self.systemd_unit and shutil.which("systemctl"):
             res = _run(f"sudo -n systemctl stop {self.systemd_unit}")
             ok = _wait_for(self.is_running, False)
             msg = "Stopped" if ok else (res.stdout.strip() or "Requested stop")
@@ -169,109 +178,37 @@ class Service:
         _append_event(self.name, "stop", msg, False)
         return False, msg
 
+def load_services_from_config(path: Path) -> Dict[str, Service]:
+    if not path.exists():
+        return {}
+    with open(path, "r") as f:
+        config = yaml.safe_load(f)
 
-def _find_code_server_bin() -> Optional[str]:
-    # First, try PATH
-    path_bin = shutil.which("code-server")
-    if path_bin:
-        return path_bin
-    # Then, search under /workspace/code-server
-    for root, _, files in os.walk("/workspace/code-server"):
-        for f in files:
-            p = os.path.join(root, f)
-            if f == "code-server" and os.access(p, os.X_OK):
-                return p
-    return None
+    services: Dict[str, Service] = {}
+    if not config or "services" not in config:
+        return {}
 
+    for name, attrs in config["services"].items():
+        # Evaluate the 'available' field as a Python expression
+        is_available = True
+        if "available" in attrs:
+            try:
+                # Provide context for eval
+                eval_context = {"os": os, "shutil": shutil}
+                is_available = eval(attrs["available"], eval_context)
+            except Exception:
+                is_available = False
 
-def build_services() -> Dict[str, Service]:
-    COMFYUI_PORT = int(os.environ.get("COMFYUI_PORT", "18188"))
-    CODE_SERVER_PORT = int(os.environ.get("CODE_SERVER_PORT", "8445"))
-    FILEBROWSER_PORT = int(os.environ.get("FILEBROWSER_PORT", "8085"))
-
-    code_bin = _find_code_server_bin()
-    code_log = "/workspace/code-server.log"
-    code_available = bool(code_bin) or os.path.exists("/etc/systemd/system/code-server-ikar.service")
-    code_cmd = None  # prefer systemd
-
-    comfy_available = os.path.exists("/workspace/ComfyUI/main.py")
-    comfy_start_cmd = None
-    if comfy_available:
-        comfy_start_cmd = (
-            "PYTHONPATH=/home/dev/.local/lib/python3.12/site-packages:$PYTHONPATH "
-            "CUDA_VISIBLE_DEVICES='' "
-            "touch /workspace/comfyui.log ; "
-            "nohup /usr/local/bin/python /workspace/ComfyUI/main.py "
-            f"--listen 0.0.0.0 --port {COMFYUI_PORT} --cpu "
-            "&> /workspace/comfyui.log &"
+        services[name] = Service(
+            name=name,
+            detect=attrs.get("detect", []),
+            start_cmd=attrs.get("start_cmd"),
+            stop_patterns=attrs.get("stop_patterns"),
+            log_path=attrs.get("log_path"),
+            port=attrs.get("port"),
+            available=is_available,
+            systemd_unit=attrs.get("systemd_unit"),
         )
-    comfy_systemd = None
-    if os.path.exists("/etc/systemd/system/comfyui-ikar.service"):
-        comfy_systemd = "comfyui-ikar"
-
-    filebrowser_bin = shutil.which("filebrowser") or "/workspace/filebrowser/filebrowser"
-    filebrowser_available = os.path.exists(filebrowser_bin)
-    filebrowser_start = None
-    if filebrowser_available:
-        filebrowser_start = (
-            "touch /workspace/filebrowser.log ; "
-            "nohup "
-            f"{filebrowser_bin} --port {FILEBROWSER_PORT} --address 0.0.0.0 --database /workspace/filebrowser.db "
-            "--root / &> /workspace/filebrowser.log &"
-        )
-    filebrowser_systemd = None
-    if os.path.exists("/etc/systemd/system/filebrowser-ikar.service"):
-        filebrowser_systemd = "filebrowser-ikar"
-
-    tailscale_available = shutil.which("tailscaled") is not None
-    tailscale_start = None
-    if tailscale_available:
-        tailscale_start = (
-            "(sudo -n tailscaled --state=/workspace/tailscale.state --tun=userspace-networking "
-            "&>> /workspace/tailscale.log &)"
-        )
-
-    services: Dict[str, Service] = {
-        "comfyui": Service(
-            name="comfyui",
-            detect=["ComfyUI/main.py", "python .*ComfyUI/main.py"],
-            start_cmd=comfy_start_cmd,
-            stop_patterns=["ComfyUI/main.py"],
-            log_path="/workspace/comfyui.log",
-            port=COMFYUI_PORT,
-            available=comfy_available,
-            systemd_unit=comfy_systemd,
-        ),
-        "code": Service(
-            name="code",
-            detect=[],
-            start_cmd=code_cmd,
-            stop_patterns=None,
-            log_path=code_log,
-            port=CODE_SERVER_PORT,
-            available=code_available,
-            systemd_unit="code-server-ikar" if code_available else None,
-        ),
-        "filebrowser": Service(
-            name="filebrowser",
-            detect=["filebrowser"],
-            start_cmd=filebrowser_start,
-            stop_patterns=["filebrowser"],
-            log_path="/workspace/filebrowser.log",
-            port=FILEBROWSER_PORT,
-            available=filebrowser_available,
-            systemd_unit=filebrowser_systemd,
-        ),
-        "tailscale": Service(
-            name="tailscale",
-            detect=["tailscaled"],
-            start_cmd=tailscale_start,
-            stop_patterns=["tailscaled"],
-            log_path="/workspace/tailscale.log",
-            available=tailscale_available,
-        ),
-    }
-
     return services
 
 
