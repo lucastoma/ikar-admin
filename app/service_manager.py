@@ -135,8 +135,9 @@ class Service:
             return success, msg
         if not self.start_cmd:
             msg = "No start command configured"
-            _append_event(self.name, "start", msg, False)
-            return False, msg
+            # Treat as no-op success (acknowledged request)
+            _append_event(self.name, "start", msg, True)
+            return True, msg
         _ensure_log_file(self.log_path)
         # Substitute environment variables in start_cmd
         expanded_cmd = os.path.expandvars(self.start_cmd)
