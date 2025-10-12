@@ -51,3 +51,29 @@ Notes
 - For code-server, the panel will look for a local binary under /workspace/code-server or in PATH.
 - Tailscale start uses userspace networking with state at /workspace/tailscale.state.
 - To expose UI at http://localhost/ikaros (port 80), configure an Nginx reverse proxy to 127.0.0.1:8602.
+
+Configuration (`config.yaml`)
+---
+Services are defined in `config.yaml`. Each service has the following attributes:
+
+- `detect`: A list of patterns to detect if the service is running.
+- `start_cmd`: The command to start the service.
+- `stop_patterns`: A list of patterns to use with `pkill` to stop the service.
+- `log_path`: The path to the service's log file.
+- `port`: The port the service runs on.
+- `available`: A safe boolean expression to check for availability. Supports `exists('/path/to/file')` and `which('binary')`, combined with `and` and `or`.
+- `systemd_unit`: The name of the systemd unit for the service. If provided, `systemctl` will be used to start, stop, and check the status of the service.
+- `pid_file`: Path to a file containing the process ID of the service. Used for more reliable stopping of the service.
+- `workdir`: The working directory to run the `start_cmd` in.
+- `env`: A dictionary of environment variables to set for the `start_cmd`.
+- `start_timeout`: Timeout in seconds for waiting for the service to start (default: 8.0).
+- `stop_timeout`: Timeout in seconds for waiting for the service to stop (default: 8.0).
+- `health`: A dictionary defining a health check for the service.
+  - `tcp`: Check if a TCP port is open.
+    - `host`: The host to check (default: `127.0.0.1`).
+    - `port`: The port to check.
+    - `timeout`: The timeout in seconds (default: 2).
+  - `http`: Check if an HTTP endpoint returns a successful response.
+    - `url`: The URL to check.
+    - `expect`: The expected HTTP status code (default: 200).
+    - `timeout`: The timeout in seconds (default: 2).

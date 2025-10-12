@@ -49,3 +49,19 @@ services:
       - "tailscaled"
     log_path: "/workspace/tailscale.log"
     available: "shutil.which('tailscaled') is not None"
+
+  my_api:
+    detect: ["python .*my_api.py"]
+    start_cmd: "nohup /usr/bin/python /workspace/my_api.py >> /workspace/my_api.log 2>&1 &"
+    stop_patterns: ["my_api.py"]
+    log_path: "/workspace/my_api.log"
+    port: 9000
+    available: "os.path.exists('/workspace/my_api.py')"
+    pid_file: "/workspace/my_api.pid"
+    workdir: "/workspace"
+    env:
+      MY_API_KEY: "supersecret"
+    health:
+      http:
+        url: "http://127.0.0.1:9000/health"
+        timeout: 5

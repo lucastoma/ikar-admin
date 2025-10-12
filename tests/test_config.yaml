@@ -2,12 +2,12 @@ services:
   running_svc:
     detect: ["running_svc_pattern"]
     port: 1111
-    available: "True"
+    available: true
 
   stopped_svc:
     detect: ["stopped_svc_pattern"]
     port: 2222
-    available: "True"
+    available: true
 
   missing_svc:
-    available: "False"
+    available: false

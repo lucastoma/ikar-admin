@@ -18,14 +18,23 @@ Polecenie uruchomienia (tworzy osobny venv):
 bash /workspace/ikar_apps/ikar-admin/run_tests.sh
 ```
 
-Zakres testów (`tests/test_app.py`):
-- Render HTML dla `/ikaros` (sprawdza listę usług, przyciski, linki „Open”).
-- `/ikaros/status` – poprawna struktura JSON.
-- `/ikaros/start/{svc}` – zwraca JSON i ustawia `running=True`.
-- `/ikaros/stop/{svc}` z nagłówkiem HTML – odpowiedź 303 i redirect z powrotem do `/ikaros`.
-- `/ikaros/logs/{svc}` – tekstowy tail logów.
-- `/ikaros/health` – zawiera pola `disk`, `ports`, `services`.
-- Scenariusze błędne (w dodatkowych testach) – nieznana usługa zwraca 404.
+Zakres testów:
+- `tests/test_app.py`:
+  - Render HTML dla `/ikaros` (sprawdza listę usług, przyciski, linki „Open”).
+  - `/ikaros/status` – poprawna struktura JSON.
+  - `/ikaros/start/{svc}` – zwraca JSON i ustawia `running=True`.
+  - `/ikaros/stop/{svc}` z nagłówkiem HTML – odpowiedź 303 i redirect z powrotem do `/ikaros`.
+  - `/ikaros/logs/{svc}` – tekstowy tail logów.
+  - `/ikaros/health` – zawiera pola `disk`, `ports`, `services`.
+  - Scenariusze błędne – nieznana usługa zwraca 404.
+- `tests/test_evaluator.py`:
+  - Testy jednostkowe dla bezpiecznego ewaluatora warunku `available`.
+  - Pokrywa poprawne i niepoprawne składnie, w tym próby użycia niebezpiecznych funkcji.
+- `tests/test_service_logic.py`:
+  - Testy jednostkowe dla logiki startu i stopu usług.
+  - Weryfikuje użycie `workdir` i `env` przy starcie.
+  - Weryfikuje logikę stopu z użyciem `pid_file` i fallback do `pkill`.
+  - Testuje health-checki (TCP i HTTP).
 
 ## Testy ręczne (CLI w ikaros)
 1. **Usługa działa**
