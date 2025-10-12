@@ -20,42 +20,34 @@ bash /workspace/ikar_apps/ikar-admin/run_tests.sh
 
 Zakres testów:
 - `tests/test_app.py`:
-  - Render HTML dla `/ikaros` (sprawdza listę usług, przyciski, linki „Open”).
-  - `/ikaros/status` – poprawna struktura JSON.
-  - `/ikaros/start/{svc}` – zwraca JSON i ustawia `running=True`.
-  - `/ikaros/stop/{svc}` z nagłówkiem HTML – odpowiedź 303 i redirect z powrotem do `/ikaros`.
-  - `/ikaros/logs/{svc}` – tekstowy tail logów.
-  - `/ikaros/health` – zawiera pola `disk`, `ports`, `services`.
-  - Scenariusze błędne – nieznana usługa zwraca 404.
+  - Render HTML dla `/ikaros`, `/ikaros/terminal`, `/ikaros/logs`.
+  - Sprawdza poprawność statusów i linków na stronie Connect.
+  - Weryfikuje, że w UI nie ma już przycisków start/stop.
+  - Testy API dla `/ikaros/status`, `/ikaros/start`, `/ikaros/stop` pozostają bez zmian.
 - `tests/test_evaluator.py`:
   - Testy jednostkowe dla bezpiecznego ewaluatora warunku `available`.
-  - Pokrywa poprawne i niepoprawne składnie, w tym próby użycia niebezpiecznych funkcji.
 - `tests/test_service_logic.py`:
-  - Testy jednostkowe dla logiki startu i stopu usług.
-  - Weryfikuje użycie `workdir` i `env` przy starcie.
-  - Weryfikuje logikę stopu z użyciem `pid_file` i fallback do `pkill`.
-  - Testuje health-checki (TCP i HTTP).
+  - Testy jednostkowe dla logiki startu i stopu usług, w tym `pid_file`, `workdir`, `env` i health-checków.
 
-## Testy ręczne (CLI w ikaros)
-1. **Usługa działa**
-   ```bash
-   systemctl status ikar-admin --no-pager
-   systemctl status nginx --no-pager
-   ```
-2. **Zdrowie backendu**
-   ```bash
-   curl -fsS http://127.0.0.1:8602/ikaros/health | jq
-   ```
-3. **Reverse proxy**
-   ```bash
-   curl -fsS http://127.0.0.1/ikaros/health | jq
-   ```
-4. **Widok HTML (tekstowo)** – wymaga pakietu `lynx` (instalacja `sudo apt-get install -y lynx`).
-   ```bash
-   lynx -dump http://127.0.0.1/ikaros/
-   ```
-   Oczekiwane: tabela z usługami (comfyui, code, filebrowser, tailscale) i linki `Logs`/`Open`.
-5. **Akcje start/stop API**
+## Testy ręczne (w przeglądarce i CLI)
+1. **Nawigacja i wygląd**
+   - Otwórz http://localhost/ikaros (lub port 8602).
+   - Sprawdź, czy widać ciemny motyw i nawigację "Connect | Terminal | Logs".
+   - Przełączaj się między zakładkami, sprawdzając, czy podświetlenie aktywnej zakładki działa.
+2. **Strona Connect**
+   - Zweryfikuj, czy lista usług i ich statusy (UP/DOWN/MISSING) są poprawne.
+   - Sprawdź, czy linki "Open" działają dla aktywnych usług z portem.
+3. **Web Terminal**
+   - Otwórz zakładkę "Terminal".
+   - Sprawdź, czy terminal się pojawia i można w nim pisać komendy (np. `ls -la`, `echo 'hello'`).
+   - Przetestuj zmianę rozmiaru okna przeglądarki – terminal powinien się dopasować.
+4. **Strona Logs**
+   - Otwórz zakładkę "Logs".
+   - Domyślnie powinny być widoczne logi "Events".
+   - Wybierz inną usługę z listy i sprawdź, czy jej logi się ładują.
+   - Przetestuj filtrowanie, wpisując frazę w pole filtra.
+   - Sprawdź przycisk "Pause/Resume".
+5. **API (bez zmian)**
    ```bash
    curl -fsS -X POST http://127.0.0.1:8602/ikaros/start/comfyui | jq
    curl -fsS -X POST http://127.0.0.1:8602/ikaros/stop/comfyui  | jq

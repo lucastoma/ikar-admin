@@ -4,6 +4,9 @@ set -euo pipefail
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$BASE_DIR"
 
+mkdir -p /workspace
+chmod 777 /workspace
+
 export PYTHONUNBUFFERED=1
 export IKAR_ADMIN_PORT=${IKAR_ADMIN_PORT:-8602}
 VENV_DIR=${IKAR_ADMIN_VENV:-/workspace/.venv/ikar-admin}

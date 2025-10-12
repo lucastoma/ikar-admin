@@ -6,18 +6,21 @@ What it is
 - Tiny HTML UI for quick start/stop/status + logs.
 
 Endpoints
-- GET /ikaros           – HTML dashboard
+- GET /ikaros           – Connect page with service statuses.
+- GET /ikaros/terminal    – Web terminal.
+- GET /ikaros/logs        – Page for viewing logs.
 - GET /ikaros/health    – JSON health (disk, ports)
 - GET /ikaros/status    – JSON services status
 - GET /ikaros/events?n=200 – Tail central action log (ik ar-admin-events.log)
 - GET /ikaros/logs/{svc}?n=200 – Tail service log (legacy)
-- POST /ikaros/start/{svc}
-- POST /ikaros/stop/{svc}
+- POST /ikaros/start/{svc} - (API only)
+- POST /ikaros/stop/{svc} - (API only)
+- WS /ikaros/ws/pty     - WebSocket for the web terminal.
 
 Status legend
-- `UP` (green) – service detected as running.
-- `DOWN` (red) – installed but not active.
-- `MISSING` (gray) – binary/config missing; start/stop buttons are disabled and API returns `ok: false` with `"Service not installed"`.
+- `UP` – service detected as running.
+- `DOWN` – installed but not active.
+- `MISSING` – binary/config missing.
 
 Services covered
 - comfyui (port 18188, log: /workspace/comfyui.log)

@@ -14,12 +14,26 @@ def test_index_html(client, monkeypatch):
     assert "stopped_svc" in html
     assert "missing_svc" in html
     # Check statuses
-    assert "<td id='status-running_svc' data-status='UP'" in html
-    assert "<td id='status-stopped_svc' data-status='DOWN'" in html
-    assert "<td id='status-missing_svc' data-status='MISSING'" in html
-    # Check disabled attribute for missing service
-    assert "<tr id='row-missing_svc'>" in html
-    assert "<button type='submit' disabled>Start</button>" in html
+    assert "status-up" in html.lower()
+    assert "status-down" in html.lower()
+    assert "status-missing" in html.lower()
+    # No start/stop buttons
+    assert "Start</button>" not in html
+    assert "Stop</button>" not in html
+
+
+def test_terminal_page(client):
+    r = client.get("/ikaros/terminal")
+    assert r.status_code == 200
+    assert "xterm.min.js" in r.text
+    assert "terminal-container" in r.text
+
+
+def test_logs_page(client):
+    r = client.get("/ikaros/logs")
+    assert r.status_code == 200
+    assert "log-source" in r.text
+    assert "log-output" in r.text
 
 
 def test_status_json(client, monkeypatch):

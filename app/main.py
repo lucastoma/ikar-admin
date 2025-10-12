@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Response, Request
+from fastapi import FastAPI, APIRouter, Response, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from . import service_manager as sm
 import os
@@ -7,10 +7,89 @@ import json
 import time
 import socket
 import shutil as _shutil
+import asyncio
+import pty
+import select
+import fcntl
+import signal
 
 
 app = FastAPI(title="ikar-admin", docs_url=None, redoc_url=None)
 router = APIRouter(prefix="/ikaros")
+
+
+@router.websocket("/ws/pty")
+async def websocket_pty(ws: WebSocket):
+    await ws.accept()
+
+    # Check origin for basic security
+    origin = ws.headers.get("origin", "").split("://")[-1]
+    host = ws.headers.get("host", "")
+    if origin != host:
+        await ws.close(code=1008, reason="Invalid origin")
+        return
+
+    sm._append_event("terminal", "open", f"Session opened from {ws.client.host}", True)
+
+    try:
+        pid, fd = pty.fork()
+    except OSError:
+        await ws.send_text("\r\nPTY not supported on this platform.\r\n")
+        sm._append_event("terminal", "open", "PTY not supported", False)
+        await ws.close()
+        return
+
+    if pid == 0:  # Child process
+        try:
+            os.environ["TERM"] = "xterm-256color"
+            os.execv("/bin/bash", ["/bin/bash", "-l"])
+        except Exception:
+            # This part is tricky to get feedback from, but we try
+            os._exit(127)
+
+    # Set master PTY to non-blocking
+    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+    try:
+        while True:
+            # Wait for data from WebSocket or PTY
+            readable, _, _ = await asyncio.to_thread(
+                lambda: select.select([ws._stream_reader._transport.get_extra_info("socket"), fd], [], [], 0.1)
+            )
+
+            if ws._stream_reader._transport.get_extra_info("socket") in readable:
+                try:
+                    data = await ws.receive_text()
+                    try:
+                        msg = json.loads(data)
+                        if msg.get("type") == "resize":
+                            import termios
+                            import struct
+                            winsize = struct.pack("HHHH", msg["rows"], msg["cols"], 0, 0)
+                            fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+                    except json.JSONDecodeError:
+                        os.write(fd, data.encode())
+                except WebSocketDisconnect:
+                    break
+
+            if fd in readable:
+                try:
+                    output = os.read(fd, 1024)
+                    if output:
+                        await ws.send_text(output.decode("utf-8", "ignore"))
+                except OSError:
+                    break # PTY closed
+
+    except Exception as e:
+        sm._append_event("terminal", "error", str(e), False)
+    finally:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os.close(fd)
+        sm._append_event("terminal", "close", f"Session closed for {ws.client.host}", True)
 
 
 def _disk_info(path: str):
@@ -97,211 +176,276 @@ def stop(request: Request, svc: str, redirect: int = 0):
     return JSONResponse({"ok": success, "message": msg, "running": s.is_running()})
 
 
+def _render_page(title: str, content: str, current_path: str, services: dict = None):
+    nav_links = {
+        "/ikaros": "Connect",
+        "/ikaros/terminal": "Terminal",
+        "/ikaros/logs": "Logs",
+    }
+    nav_html = "".join(
+        f"<a href='{path}' class='{'active' if path == current_path else ''}'>{name}</a>"
+        for path, name in nav_links.items()
+    )
+
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>{title} - ikar-admin</title>
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+        <style>
+            :root {{
+                --bg-color: #0d1117;
+                --text-color: #c9d1d9;
+                --border-color: #30363d;
+                --accent-color: #58a6ff;
+                --header-bg: #161b22;
+                --status-up: #238636;
+                --status-down: #da3633;
+                --status-missing: #8b949e;
+            }}
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+                background-color: var(--bg-color);
+                color: var(--text-color);
+                margin: 0;
+                padding: 0;
+            }}
+            .container {{
+                max-width: 960px;
+                margin: 20px auto;
+                padding: 0 20px;
+            }}
+            header {{
+                background-color: var(--header-bg);
+                border-bottom: 1px solid var(--border-color);
+                padding: 12px 20px;
+                display: flex;
+                align-items: center;
+                gap: 16px;
+            }}
+            header h1 {{
+                margin: 0;
+                font-size: 1.5em;
+            }}
+            nav a {{
+                color: var(--text-color);
+                text-decoration: none;
+                padding: 8px 12px;
+                border-radius: 6px;
+            }}
+            nav a.active {{
+                background-color: var(--accent-color);
+                color: var(--bg-color);
+                font-weight: 600;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+            }}
+            th, td {{
+                border: 1px solid var(--border-color);
+                padding: 10px 14px;
+                text-align: left;
+            }}
+            th {{
+                background-color: var(--header-bg);
+            }}
+            .status-badge {{
+                padding: 4px 8px;
+                border-radius: 12px;
+                font-size: 0.8em;
+                font-weight: 600;
+                color: #fff;
+            }}
+            .status-up {{ background-color: var(--status-up); }}
+            .status-down {{ background-color: var(--status-down); }}
+            .status-missing {{ background-color: var(--status-missing); }}
+            a {{ color: var(--accent-color); }}
+            #terminal-container, #log-container {{
+                border: 1px solid var(--border-color);
+                margin-top: 20px;
+                min-height: 400px;
+            }}
+            .log-controls {{
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                padding: 10px;
+                background: var(--header-bg);
+                border-bottom: 1px solid var(--border-color);
+            }}
+            select, input[type=text], button {{
+                background-color: var(--bg-color);
+                color: var(--text-color);
+                border: 1px solid var(--border-color);
+                padding: 5px 8px;
+                border-radius: 6px;
+            }}
+        </style>
+    </head>
+    <body>
+        <header>
+            <h1>ikar-admin</h1>
+            <nav>{nav_html}</nav>
+        </header>
+        <main class="container">
+            {content}
+        </main>
+        <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.9.0/lib/xterm-addon-fit.min.js"></script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html)
+
 @router.get("/")
-def index():
+def index(request: Request):
     services = sm.load_services_from_config(sm.CONFIG_PATH)
     rows = []
     for name, svc in services.items():
         running = svc.is_running()
         status_label = "UP" if running else ("MISSING" if not svc.available else "DOWN")
-        status_color = "green" if running else ("#666" if not svc.available else "red")
-        disabled_attr = " disabled" if not svc.available else ""
+        status_class = "status-" + status_label.lower()
         open_link = ""
         if svc.available and svc.port:
             open_link = f"<a href='http://localhost:{svc.port}/' target='_blank'>Open</a>"
 
         rows.append(
-            f"<tr id='row-{name}'><td><b>{name}</b></td>"
-            f"<td id='status-{name}' data-status='{status_label}' data-available='{str(svc.available).lower()}' class='status-"
-            f"{'up' if running else ('missing' if not svc.available else 'down')}'>{status_label}</td>"
-            f"<td>"
-            f"<form method='post' data-service='{name}' data-action='start' action='/ikaros/start/{name}?redirect=1' style='display:inline'>"
-            f"<button type='submit'{disabled_attr}>Start</button></form>"
-            f"<form method='post' data-service='{name}' data-action='stop' action='/ikaros/stop/{name}?redirect=1' style='display:inline;margin-left:6px'>"
-            f"<button type='submit'{disabled_attr}>Stop</button></form>"
-            f"<span style='margin-left:10px'>{open_link}</span>"
-            f"</td>"
-            f"</tr>"
+            f"<tr><td><b>{name}</b></td>"
+            f"<td><span class='status-badge {status_class}'>{status_label}</span></td>"
+            f"<td>{open_link}</td></tr>"
         )
 
-    html = f"""
-    <html>
-    <head>
-        <meta charset='utf-8'/>
-        <title>ikar-admin</title>
-        <style>
-            body {{ font-family: system-ui, sans-serif; margin: 20px; }}
-            table {{ border-collapse: collapse; width: 680px; }}
-            th, td {{ border: 1px solid #ddd; padding: 8px; }}
-            th {{ background: #f5f5f5; text-align: left; }}
-            button {{ padding: 4px 10px; }}
-            .status-up {{ color: green; }}
-            .status-down {{ color: red; }}
-            .status-missing {{ color: #666; }}
-            #toast {{ position: fixed; bottom: 20px; right: 20px; background: #333; color: #fff; padding: 8px 12px; border-radius: 4px; opacity: 0; transition: opacity 0.3s; }}
-            #log-container {{ margin-top: 20px; border: 1px solid #ddd; background: #f9f9f9; padding: 10px; }}
-            #log-header {{ display: flex; align-items: center; gap: 8px; font-size: 0.9em; color: #333; }}
-            #log-output {{ max-height: 260px; overflow-y: auto; white-space: pre-wrap; background: #fff; border: 1px solid #ccc; padding: 8px; }}
-        </style>
-    </head>
-    <body>
-        <h2>ikar-admin</h2>
-        <p>Quick status and controls for local services.</p>
-        <div id='meta' style='margin:6px 0; font-size: 0.9em; color:#555;'>
-          Last update: <span id='last-upd'>now</span>
-          <span id='pending' style='margin-left:12px; display:none;'>Pending: <span id='pending-list'></span></span>
-        </div>
+    content = f"""
+        <h2>Connect</h2>
+        <p>Service connection status and quick links.</p>
         <table>
-            <tr><th>Service</th><th>Status</th><th>Controls</th></tr>
-            {''.join(rows)}
+            <thead><tr><th>Service</th><th>Status</th><th>Link</th></tr></thead>
+            <tbody>{''.join(rows)}</tbody>
         </table>
-        <p style='margin-top:16px'><a href='/ikaros/health' target='_blank'>Health (JSON)</a></p>
-        <div id='toast'></div>
-        <div id='log-container'>
-          <div id='log-header'>
-            <span>Logs:</span> <strong id='log-title'>events log</strong>
-            <button type='button' id='log-clear'>Clear</button>
-          </div>
-          <pre id='log-output'>(loading…)</pre>
+    """
+    return _render_page("Connect", content, str(request.url.path), services)
+
+
+@router.get("/terminal")
+def terminal(request: Request):
+    content = """
+        <h2>Web Terminal</h2>
+        <div id="terminal-container"></div>
+        <script>
+            const term = new Terminal({
+                cursorBlink: true,
+                theme: {
+                    background: '#0d1117',
+                    foreground: '#c9d1d9',
+                }
+            });
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(document.getElementById('terminal-container'));
+            fitAddon.fit();
+
+            const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+            const wsUrl = `${wsProtocol}://${location.host}/ikaros/ws/pty`;
+            const ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                term.focus();
+            };
+
+            ws.onmessage = (event) => {
+                term.write(event.data);
+            };
+
+            ws.onclose = () => {
+                term.write('\\r\\n\\nConnection closed.\\r\\n');
+            };
+
+            term.onData((data) => {
+                ws.send(data);
+            });
+
+            window.addEventListener('resize', () => {
+                fitAddon.fit();
+            });
+
+            term.onResize(({ cols, rows }) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+                }
+            });
+        </script>
+    """
+    return _render_page("Terminal", content, str(request.url.path))
+
+
+@router.get("/logs")
+def logs(request: Request):
+    services = sm.load_services_from_config(sm.CONFIG_PATH)
+    service_options = "".join(f"<option value='{name}'>{name}</option>" for name in services.keys())
+
+    content = f"""
+        <h2>Logs</h2>
+        <div class="log-controls">
+            <select id="log-source">
+                <option value="events">Events</option>
+                {service_options}
+            </select>
+            <input type="text" id="log-filter" placeholder="Filter logs...">
+            <button id="log-pause-btn">Pause</button>
         </div>
+        <pre id="log-output" style="white-space: pre-wrap; word-break: break-all; background: #010409; padding: 10px; border-radius: 6px; border: 1px solid var(--border-color);"></pre>
         
         <script>
-            const toastEl = document.getElementById('toast');
-            const lastUpdEl = document.getElementById('last-upd');
-            const pendingEl = document.getElementById('pending');
-            const pendingListEl = document.getElementById('pending-list');
-            const logTitle = document.getElementById('log-title');
+            const logSource = document.getElementById('log-source');
+            const logFilter = document.getElementById('log-filter');
             const logOutput = document.getElementById('log-output');
-            const logClearBtn = document.getElementById('log-clear');
+            const pauseBtn = document.getElementById('log-pause-btn');
 
-            let lastUpdAt = Date.now();
-            const pendingSvcs = new Map();
+            let polling = true;
+            let intervalId;
 
-            function showToast(msg) {{
-                toastEl.textContent = msg;
-                toastEl.style.opacity = '1';
-                clearTimeout(window.__ikarToastTimer);
-                window.__ikarToastTimer = setTimeout(() => {{ toastEl.style.opacity = '0'; }}, 2500);
-            }}
+            async function fetchLogs() {{
+                if (!polling) return;
 
-            function refreshMeta() {{
-                const sec = Math.floor((Date.now() - lastUpdAt) / 1000);
-                lastUpdEl.textContent = sec === 0 ? 'now' : `${{sec}}s ago`;
-                const names = Array.from(pendingSvcs.keys());
-                if (names.length > 0) {{
-                    pendingEl.style.display = '';
-                    pendingListEl.textContent = names.join(', ');
-                }} else {{
-                    pendingEl.style.display = 'none';
-                }}
-            }}
+                const source = logSource.value;
+                const url = source === 'events' ? '/ikaros/events?n=500' : `/ikaros/logs/${{source}}?n=500`;
 
-            async function loadEvents() {{
                 try {{
-                    const res = await fetch('/ikaros/events?n=200');
-                    if (!res.ok) throw new Error(res.status);
+                    const res = await fetch(url);
                     const text = await res.text();
-                    logTitle.textContent = 'events log';
-                    logOutput.textContent = text || '(no events yet)';
-                }} catch (err) {{
-                    logOutput.textContent = `Failed to load events: ${{err}}`;
-                }}
-            }}
+                    const filterValue = logFilter.value.toLowerCase();
 
-            async function fetchStatus() {{
-                try {{
-                    const res = await fetch('/ikaros/status', {{ headers: {{ 'Accept': 'application/json' }} }});
-                    if (!res.ok) return;
-                    const data = await res.json();
-                    Object.entries(data).forEach(([svc, running]) => {{
-                        const cell = document.getElementById('status-' + svc);
-                        if (!cell) return;
-                        const available = cell.dataset.available !== 'false';
-                        let label = available ? 'DOWN' : 'MISSING';
-                        let cls = available ? 'status-down' : 'status-missing';
-                        if (available && running) {{
-                            label = 'UP';
-                            cls = 'status-up';
-                            if (pendingSvcs.has(svc)) {{
-                                clearInterval(pendingSvcs.get(svc));
-                                pendingSvcs.delete(svc);
-                            }}
-                        }}
-                        cell.textContent = label;
-                        cell.dataset.status = label;
-                        cell.className = cls;
-                    }});
-                    lastUpdAt = Date.now();
-                    refreshMeta();
-                }} catch (err) {{
-                    console.error(err);
-                }}
-            }}
-
-            function schedulePendingCheck(svc, seconds = 10) {{
-                if (pendingSvcs.has(svc)) {{
-                    clearInterval(pendingSvcs.get(svc));
-                }}
-                let remaining = seconds;
-                const handle = setInterval(async () => {{
-                    await fetchStatus();
-                    remaining -= 1;
-                    if (!pendingSvcs.has(svc) || remaining <= 0) {{
-                        clearInterval(handle);
-                        pendingSvcs.delete(svc);
-                        refreshMeta();
+                    if (filterValue) {{
+                        const filteredLines = text.split('\\n').filter(line => line.toLowerCase().includes(filterValue));
+                        logOutput.textContent = filteredLines.join('\\n');
+                    }} else {{
+                        logOutput.textContent = text;
                     }}
-                }}, 1000);
-                pendingSvcs.set(svc, handle);
-                refreshMeta();
+                }} catch (e) {{
+                    logOutput.textContent = `Error loading logs: ${{e}}`;
+                }}
             }}
 
-            document.querySelectorAll('form[data-service]').forEach(form => {{
-                form.addEventListener('submit', async ev => {{
-                    if (ev.defaultPrevented) return;
-                    ev.preventDefault();
-                    const svc = form.dataset.service;
-                    const formBtn = form.querySelector('button');
-                    formBtn.disabled = true;
-                    const url = new URL(form.action, window.location.origin);
-                    url.searchParams.set('redirect', '0');
-                    try {{
-                        const res = await fetch(url.toString(), {{
-                            method: 'POST',
-                            headers: {{ 'Accept': 'application/json' }}
-                        }});
-                        if (res.ok) {{
-                            const data = await res.json();
-                            if (data.message) showToast(`${{svc}}: ${{data.message}}`);
-                            schedulePendingCheck(svc, 10);
-                        }} else {{
-                            showToast(`${{svc}}: request failed (${{res.status}})`);
-                        }}
-                    }} catch (err) {{
-                        showToast(`${{svc}}: error ${{err}}`);
-                    }} finally {{
-                        formBtn.disabled = false;
-                        await fetchStatus();
-                        await loadEvents();
-                    }}
-                }});
+            function startPolling() {{
+                fetchLogs();
+                intervalId = setInterval(fetchLogs, 4000);
+            }}
+
+            logSource.addEventListener('change', fetchLogs);
+            logFilter.addEventListener('input', fetchLogs);
+            pauseBtn.addEventListener('click', () => {{
+                polling = !polling;
+                pauseBtn.textContent = polling ? 'Pause' : 'Resume';
             }});
 
-            logClearBtn.addEventListener('click', () => {{
-                logOutput.textContent = '(cleared by user)';
-            }});
-
-            loadEvents();
-            fetchStatus();
-            setInterval(fetchStatus, 30000);
-            setInterval(loadEvents, 30000);
-            setInterval(refreshMeta, 1000);
+            startPolling();
         </script>
-
-    </body>
-    </html>
     """
-    return HTMLResponse(html)
+    return _render_page("Logs", content, str(request.url.path))
 
 
 app.include_router(router)
