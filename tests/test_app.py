@@ -16,7 +16,7 @@ def test_index_html():
         assert name in html
     # controls visible
     assert "Start" in html and "Stop" in html
-    assert "log-btn" in html
+    assert "log-container" in html
     assert "log-container" in html
     # quick access links
     assert "http://localhost:18188/" in html

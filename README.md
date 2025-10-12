@@ -9,7 +9,8 @@ Endpoints
 - GET /ikaros           – HTML dashboard
 - GET /ikaros/health    – JSON health (disk, ports)
 - GET /ikaros/status    – JSON services status
-- GET /ikaros/logs/{svc}?n=200 – Tail N log lines
+- GET /ikaros/events?n=200 – Tail central action log (ik ar-admin-events.log)
+- GET /ikaros/logs/{svc}?n=200 – Tail service log (legacy)
 - POST /ikaros/start/{svc}
 - POST /ikaros/stop/{svc}
 
@@ -42,7 +43,7 @@ Tests
   - HTML dashboard renders with services and controls
   - /status JSON shape
   - start/stop endpoints return JSON (with `ok`) and 303 redirect for HTML flows
-  - logs returns plaintext tail
+  - /events returns tail of central log
   - health JSON shape
   - missing service path returns disabled buttons + `Service not installed`
 

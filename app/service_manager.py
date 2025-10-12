@@ -5,6 +5,7 @@ import subprocess
 import re
 import time
 from pathlib import Path
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Dict, Optional, List
 
@@ -64,6 +65,24 @@ def _wait_for(predicate, expect: bool, timeout: float = 8.0, interval: float = 0
     return predicate() == expect
 
 
+EVENT_LOG_PATH = os.environ.get("IKAR_EVENT_LOG", "/workspace/ikar-admin-events.log")
+try:
+    Path(EVENT_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
+    Path(EVENT_LOG_PATH).touch(exist_ok=True)
+except OSError:
+    pass
+
+
+def _append_event(service: str, action: str, message: str, success: bool) -> None:
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status = "OK" if success else "FAIL"
+        with open(EVENT_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(f"[{ts}] [{service}] [{action}] [{status}] {message}\n")
+    except OSError:
+        pass
+
+
 @dataclass
 class Service:
     name: str
@@ -94,15 +113,24 @@ class Service:
 
     def start(self) -> (bool, str):
         if not self.available:
-            return False, "Service not installed"
+            msg = "Service not installed"
+            _append_event(self.name, "start", msg, False)
+            return False, msg
         if self.is_running():
-            return True, "Already running"
+            msg = "Already running"
+            _append_event(self.name, "start", msg, True)
+            return True, msg
         if self.systemd_unit:
             res = _run(f"sudo -n systemctl start {self.systemd_unit}")
             ok = _wait_for(self.is_running, True)
-            return (res.returncode == 0 and ok), res.stdout.strip() or "systemd start"
+            msg = res.stdout.strip() or "systemd start"
+            success = res.returncode == 0 and ok
+            _append_event(self.name, "start", msg, success)
+            return success, msg
         if not self.start_cmd:
-            return False, "No start command configured"
+            msg = "No start command configured"
+            _append_event(self.name, "start", msg, False)
+            return False, msg
         _ensure_log_file(self.log_path)
         res = _run(self.start_cmd)
         success = res.returncode == 0
@@ -110,23 +138,36 @@ class Service:
         if success and not output:
             output = "Launch command executed"
         started = _wait_for(self.is_running, True)
-        return (success and started), output or "(no output)"
+        msg = output or "(no output)"
+        final = success and started
+        _append_event(self.name, "start", msg, final)
+        return final, msg
 
     def stop(self) -> (bool, str):
         if not self.available:
-            return False, "Service not installed"
+            msg = "Service not installed"
+            _append_event(self.name, "stop", msg, False)
+            return False, msg
         if self.systemd_unit:
             res = _run(f"sudo -n systemctl stop {self.systemd_unit}")
             ok = _wait_for(self.is_running, False)
-            return (res.returncode == 0 and ok), "Stopped" if ok else (res.stdout.strip() or "Requested stop")
+            msg = "Stopped" if ok else (res.stdout.strip() or "Requested stop")
+            success = res.returncode == 0 and ok
+            _append_event(self.name, "stop", msg, success)
+            return success, msg
         if self.stop_patterns:
             ok = False
             for pat in self.stop_patterns:
                 if _pkill(pat):
                     ok = True
             stopped = _wait_for(self.is_running, False)
-            return (ok and stopped), "Stopped" if ok else "No processes matched"
-        return False, "No stop patterns configured"
+            msg = "Stopped" if ok else "No processes matched"
+            success = ok and stopped
+            _append_event(self.name, "stop", msg, success)
+            return success, msg
+        msg = "No stop patterns configured"
+        _append_event(self.name, "stop", msg, False)
+        return False, msg
 
 
 def _find_code_server_bin() -> Optional[str]:

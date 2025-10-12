@@ -1,6 +1,6 @@
 from fastapi import FastAPI, APIRouter, Response, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
-from .service_manager import build_services, tail_file
+from .service_manager import build_services, tail_file, EVENT_LOG_PATH
 import os
 import shutil
 import json
@@ -65,6 +65,11 @@ def logs(svc: str, n: int = 200):
     return PlainTextResponse(out)
 
 
+@router.get("/events")
+def events(n: int = 200):
+    return PlainTextResponse(tail_file(EVENT_LOG_PATH, n))
+
+
 @router.post("/start/{svc}")
 def start(request: Request, svc: str, redirect: int = 0):
     services = build_services()
@@ -112,10 +117,6 @@ def index():
             elif name == "filebrowser":
                 port = int(os.environ.get("FILEBROWSER_PORT", "8085"))
                 open_link = f"<a href='http://localhost:{port}/' target='_blank'>Open</a>"
-        log_btn = (
-            f"<button type='button' class='log-btn' data-service='{name}' style='margin-left:10px'>Logs</button>"
-            if svc.log_path else ""
-        )
         rows.append(
             f"<tr id='row-{name}'><td><b>{name}</b></td>"
             f"<td id='status-{name}' data-status='{status_label}' data-available='{str(svc.available).lower()}' class='status-"
@@ -125,7 +126,6 @@ def index():
             f"<button type='submit'{disabled_attr}>Start</button></form>"
             f"<form method='post' data-service='{name}' data-action='stop' action='/ikaros/stop/{name}?redirect=1' style='display:inline;margin-left:6px'>"
             f"<button type='submit'{disabled_attr}>Stop</button></form>"
-            f"{log_btn}"
             f"<span style='margin-left:10px'>{open_link}</span>"
             f"</td>"
             f"</tr>"
@@ -146,6 +146,9 @@ def index():
             .status-down {{ color: red; }}
             .status-missing {{ color: #666; }}
             #toast {{ position: fixed; bottom: 20px; right: 20px; background: #333; color: #fff; padding: 8px 12px; border-radius: 4px; opacity: 0; transition: opacity 0.3s; }}
+            #log-container {{ margin-top: 20px; border: 1px solid #ddd; background: #f9f9f9; padding: 10px; }}
+            #log-header {{ display: flex; align-items: center; gap: 8px; font-size: 0.9em; color: #333; }}
+            #log-output {{ max-height: 260px; overflow-y: auto; white-space: pre-wrap; background: #fff; border: 1px solid #ccc; padding: 8px; }}
         </style>
     </head>
     <body>
@@ -163,21 +166,23 @@ def index():
         <div id='toast'></div>
         <div id='log-container'>
           <div id='log-header'>
-            <span>Logs:</span> <strong id='log-title'>none selected</strong>
+            <span>Logs:</span> <strong id='log-title'>events log</strong>
             <button type='button' id='log-clear'>Clear</button>
           </div>
-          <pre id='log-output'>(select a service to view logs)</pre>
+          <pre id='log-output'>(loading…)</pre>
         </div>
+        
         <script>
             const toastEl = document.getElementById('toast');
             const lastUpdEl = document.getElementById('last-upd');
             const pendingEl = document.getElementById('pending');
             const pendingListEl = document.getElementById('pending-list');
-            const logOutput = document.getElementById('log-output');
             const logTitle = document.getElementById('log-title');
+            const logOutput = document.getElementById('log-output');
             const logClearBtn = document.getElementById('log-clear');
+
             let lastUpdAt = Date.now();
-            const pendingSvcs = new Map(); // svc -> timeout handle
+            const pendingSvcs = new Map();
 
             function showToast(msg) {{
                 toastEl.textContent = msg;
@@ -198,6 +203,18 @@ def index():
                 }}
             }}
 
+            async function loadEvents() {{
+                try {{
+                    const res = await fetch('/ikaros/events?n=200');
+                    if (!res.ok) throw new Error(res.status);
+                    const text = await res.text();
+                    logTitle.textContent = 'events log';
+                    logOutput.textContent = text || '(no events yet)';
+                }} catch (err) {{
+                    logOutput.textContent = `Failed to load events: ${{err}}`;
+                }}
+            }}
+
             async function fetchStatus() {{
                 try {{
                     const res = await fetch('/ikaros/status', {{ headers: {{ 'Accept': 'application/json' }} }});
@@ -213,7 +230,7 @@ def index():
                             label = 'UP';
                             cls = 'status-up';
                             if (pendingSvcs.has(svc)) {{
-                                clearTimeout(pendingSvcs.get(svc));
+                                clearInterval(pendingSvcs.get(svc));
                                 pendingSvcs.delete(svc);
                             }}
                         }}
@@ -230,24 +247,18 @@ def index():
 
             function schedulePendingCheck(svc, seconds = 10) {{
                 if (pendingSvcs.has(svc)) {{
-                    clearTimeout(pendingSvcs.get(svc));
+                    clearInterval(pendingSvcs.get(svc));
                 }}
-                const poll = async (remain) => {{
+                let remaining = seconds;
+                const handle = setInterval(async () => {{
                     await fetchStatus();
-                    if (!pendingSvcs.has(svc)) {{
-                        refreshMeta();
-                        return;
-                    }}
-                    if (remain <= 0) {{
+                    remaining -= 1;
+                    if (!pendingSvcs.has(svc) || remaining <= 0) {{
+                        clearInterval(handle);
                         pendingSvcs.delete(svc);
                         refreshMeta();
-                        return;
                     }}
-                    const handle = setTimeout(() => poll(remain - 1), 1000);
-                    pendingSvcs.set(svc, handle);
-                    refreshMeta();
-                }};
-                const handle = setTimeout(() => poll(seconds - 1), 1000);
+                }}, 1000);
                 pendingSvcs.set(svc, handle);
                 refreshMeta();
             }}
@@ -269,61 +280,31 @@ def index():
                         if (res.ok) {{
                             const data = await res.json();
                             if (data.message) showToast(`${{svc}}: ${{data.message}}`);
-                            if (typeof window.__ikarAppendEvent === 'function' && data.message) {{
-                                window.__ikarAppendEvent(`[${{svc}}] ${{data.message}}`);
-                            }}
                             schedulePendingCheck(svc, 10);
                         }} else {{
                             showToast(`${{svc}}: request failed (${{res.status}})`);
-                            if (typeof window.__ikarAppendEvent === 'function') {{
-                                window.__ikarAppendEvent(`[${{svc}}] request failed (${{res.status}})`);
-                            }}
                         }}
                     }} catch (err) {{
                         showToast(`${{svc}}: error ${{err}}`);
-                        if (typeof window.__ikarAppendEvent === 'function') {{
-                            window.__ikarAppendEvent(`[${{svc}}] error ${{err}}`);
-                        }}
                     }} finally {{
                         formBtn.disabled = false;
                         await fetchStatus();
+                        await loadEvents();
                     }}
                 }});
             }});
 
+            logClearBtn.addEventListener('click', () => {{
+                logOutput.textContent = '(cleared by user)';
+            }});
+
+            loadEvents();
             fetchStatus();
             setInterval(fetchStatus, 30000);
+            setInterval(loadEvents, 30000);
             setInterval(refreshMeta, 1000);
-
-            function setLogContent(title, content) {{
-                logTitle.textContent = title;
-                logOutput.textContent = content;
-            }}
-            function appendEvent(msg) {{
-                const ts = new Date().toLocaleTimeString();
-                const existing = logOutput.textContent === '(select a service to view logs)' ? '' : logOutput.textContent + '\\n';
-                logOutput.textContent = `${{existing}}[${{ts}}] ${{msg}}`;
-            }}
-
-            document.querySelectorAll('.log-btn').forEach(btn => {{
-                btn.addEventListener('click', async () => {{
-                    const svc = btn.dataset.service;
-                    setLogContent(`${{svc}} log`, 'Loading…');
-                    try {{
-                        const res = await fetch(`/ikaros/logs/${{svc}}`);
-                        const text = await res.text();
-                        setLogContent(`${{svc}} log`, text || '<log file empty>');
-                    }} catch (err) {{
-                        setLogContent(`${{svc}} log`, `Failed to load log: ${{err}}`);
-                    }}
-                }});
-            }});
-            logClearBtn.addEventListener('click', () => {{
-                setLogContent('none selected', '(select a service to view logs)');
-            }});
-
-            window.__ikarAppendEvent = appendEvent;
         </script>
+
     </body>
     </html>
     """
