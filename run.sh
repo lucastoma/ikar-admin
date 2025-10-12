@@ -10,6 +10,19 @@ chmod 777 /workspace
 export PYTHONUNBUFFERED=1
 export IKAR_ADMIN_PORT=${IKAR_ADMIN_PORT:-8602}
 
+# Load optional environment files (export all)
+set +a
+for ENV_FILE in \
+  "/workspace/pod_config_ikarosopolis/.env" \
+  "/workspace/.env"; do
+  if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+  fi
+done
+
 # Configuration (no nested venv by default)
 PY_BIN=${IKAR_ADMIN_PY:-python3}
 USE_VENV=${IKAR_ADMIN_USE_VENV:-0}          # set to 1 to create/use a dedicated venv
@@ -34,8 +47,7 @@ if [ "${BOOTSTRAP}" = "1" ]; then
       "$PY_BIN" -m pip install -r "$BASE_DIR/requirements.txt" >/dev/null
     fi
   else
-    # No venv: prefer user installs to avoid PEP 668
-    "$PY_BIN" -m pip install --user -U pip wheel setuptools >/dev/null || true
+    # No venv: avoid upgrading pip/wheel; install requirements to user site
     "$PY_BIN" -m pip install --user -r "$BASE_DIR/requirements.txt" >/dev/null || {
       if [ "$PIP_BREAK" = "1" ]; then
         "$PY_BIN" -m pip install --break-system-packages -r "$BASE_DIR/requirements.txt" >/dev/null
