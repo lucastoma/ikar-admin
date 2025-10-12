@@ -9,16 +9,43 @@ chmod 777 /workspace
 
 export PYTHONUNBUFFERED=1
 export IKAR_ADMIN_PORT=${IKAR_ADMIN_PORT:-8602}
-VENV_DIR=${IKAR_ADMIN_VENV:-/workspace/.venv/ikar-admin}
 
-if [ ! -d "$VENV_DIR" ]; then
-  python3 -m venv "$VENV_DIR"
+# Configuration (no nested venv by default)
+PY_BIN=${IKAR_ADMIN_PY:-python3}
+USE_VENV=${IKAR_ADMIN_USE_VENV:-0}          # set to 1 to create/use a dedicated venv
+BOOTSTRAP=${IKAR_ADMIN_BOOTSTRAP:-0}        # set to 1 to pip install requirements into selected interpreter
+
+if [ "${USE_VENV}" = "1" ]; then
+  VENV_DIR=${IKAR_ADMIN_VENV:-/workspace/.venv/ikar-admin}
+  if [ ! -d "$VENV_DIR" ]; then
+    "$PY_BIN" -m venv "$VENV_DIR"
+  fi
+  PY_BIN="$VENV_DIR/bin/python"
 fi
 
-source "$VENV_DIR/bin/activate"
-python -m pip install -U pip wheel setuptools >/dev/null
-python -m pip install -r "$BASE_DIR/requirements.txt" >/dev/null
+if [ "${BOOTSTRAP}" = "1" ]; then
+  PIP_BREAK=${IKAR_ADMIN_PIP_BREAK:-0}
+  IN_VENV=$("$PY_BIN" -c "import sys; print('1' if sys.prefix!=getattr(sys,'base_prefix',sys.prefix) else '0')")
+  if [ "$IN_VENV" = "1" ]; then
+    "$PY_BIN" -m pip install -U pip wheel setuptools >/dev/null
+    if [ "$PIP_BREAK" = "1" ]; then
+      "$PY_BIN" -m pip install --break-system-packages -r "$BASE_DIR/requirements.txt" >/dev/null
+    else
+      "$PY_BIN" -m pip install -r "$BASE_DIR/requirements.txt" >/dev/null
+    fi
+  else
+    # No venv: prefer user installs to avoid PEP 668
+    "$PY_BIN" -m pip install --user -U pip wheel setuptools >/dev/null || true
+    "$PY_BIN" -m pip install --user -r "$BASE_DIR/requirements.txt" >/dev/null || {
+      if [ "$PIP_BREAK" = "1" ]; then
+        "$PY_BIN" -m pip install --break-system-packages -r "$BASE_DIR/requirements.txt" >/dev/null
+      else
+        echo "[ikar-admin] pip install failed in system env. Retry with IKAR_ADMIN_PIP_BREAK=1 or install deps manually." >&2
+      fi
+    }
+  fi
+fi
 
-exec "$VENV_DIR/bin/python" -m uvicorn app.main:app \
+exec "$PY_BIN" -m uvicorn app.main:app \
   --host 127.0.0.1 \
   --port "$IKAR_ADMIN_PORT"

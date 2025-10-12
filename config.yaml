@@ -14,7 +14,7 @@ services:
       - "ComfyUI/main.py"
     log_path: "/workspace/comfyui.log"
     port: 18188
-    available: "os.path.exists('/workspace/ComfyUI/main.py')"
+    available: "exists('/workspace/ComfyUI/main.py')"
     systemd_unit: "comfyui-ikar"
 
   code:
@@ -23,7 +23,7 @@ services:
     stop_patterns: null
     log_path: "/workspace/code-server.log"
     port: 8445
-    available: "shutil.which('code-server') or os.path.exists('/etc/systemd/system/code-server-ikar.service')"
+    available: "which('code-server') or exists('/etc/systemd/system/code-server-ikar.service')"
     systemd_unit: "code-server-ikar"
 
   filebrowser:
@@ -38,7 +38,7 @@ services:
       - "filebrowser"
     log_path: "/workspace/filebrowser.log"
     port: 8085
-    available: "shutil.which('filebrowser') or os.path.exists('/workspace/bin/filebrowser')"
+    available: "which('filebrowser') or exists('/workspace/bin/filebrowser')"
     systemd_unit: "filebrowser-ikar"
 
   tailscale:
@@ -48,7 +48,7 @@ services:
     stop_patterns:
       - "tailscaled"
     log_path: "/workspace/tailscale.log"
-    available: "shutil.which('tailscaled') is not None"
+    available: "which('tailscaled')"
 
   my_api:
     detect: ["python .*my_api.py"]
@@ -56,7 +56,7 @@ services:
     stop_patterns: ["my_api.py"]
     log_path: "/workspace/my_api.log"
     port: 9000
-    available: "os.path.exists('/workspace/my_api.py')"
+    available: "exists('/workspace/my_api.py')"
     pid_file: "/workspace/my_api.pid"
     workdir: "/workspace"
     env:

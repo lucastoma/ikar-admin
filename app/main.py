@@ -284,6 +284,17 @@ def _render_page(title: str, content: str, current_path: str, services: dict = N
                 padding: 5px 8px;
                 border-radius: 6px;
             }}
+            #toast {{
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                background: #333;
+                color: #fff;
+                padding: 8px 12px;
+                border-radius: 4px;
+                opacity: 0;
+                transition: opacity 0.3s;
+            }}
         </style>
     </head>
     <body>
@@ -313,19 +324,96 @@ def index(request: Request):
         if svc.available and svc.port:
             open_link = f"<a href='http://localhost:{svc.port}/' target='_blank'>Open</a>"
 
+        disabled_attr = " disabled" if not svc.available else ""
+        controls = (
+            f"<button class='btn-start' data-svc='{name}'{disabled_attr}>Start</button> "
+            f"<button class='btn-stop' data-svc='{name}'{disabled_attr} style='margin-left:6px'>Stop</button>"
+        )
+
         rows.append(
-            f"<tr><td><b>{name}</b></td>"
-            f"<td><span class='status-badge {status_class}'>{status_label}</span></td>"
-            f"<td>{open_link}</td></tr>"
+            f"<tr id='row-{name}'>"
+            f"<td><b>{name}</b></td>"
+            f"<td><span id='status-{name}' data-available='{str(svc.available).lower()}' class='status-badge {status_class}'>{status_label}</span></td>"
+            f"<td>{open_link}</td>"
+            f"<td>{controls}</td>"
+            f"</tr>"
         )
 
     content = f"""
         <h2>Connect</h2>
-        <p>Service connection status and quick links.</p>
+        <p>Service connection status, quick links and controls.</p>
         <table>
-            <thead><tr><th>Service</th><th>Status</th><th>Link</th></tr></thead>
+            <thead><tr><th>Service</th><th>Status</th><th>Link</th><th>Controls</th></tr></thead>
             <tbody>{''.join(rows)}</tbody>
         </table>
+        <div id='toast'></div>
+        <script>
+            const toastEl = document.getElementById('toast');
+            function showToast(msg) {{
+                toastEl.textContent = msg;
+                toastEl.style.opacity = '1';
+                clearTimeout(window.__ikarToastTimer);
+                window.__ikarToastTimer = setTimeout(() => {{ toastEl.style.opacity = '0'; }}, 2500);
+            }}
+
+            function applyStatus(name, running) {{
+                const el = document.getElementById('status-' + name);
+                if (!el) return;
+                const available = el.dataset.available !== 'false';
+                let label = available ? 'DOWN' : 'MISSING';
+                let cls = available ? 'status-down' : 'status-missing';
+                if (available && running) {{
+                    label = 'UP';
+                    cls = 'status-up';
+                }}
+                el.textContent = label;
+                el.className = 'status-badge ' + cls;
+            }}
+
+            async function fetchStatus() {{
+                try {{
+                    const res = await fetch('/ikaros/status', {{ headers: {{ 'Accept': 'application/json' }} }});
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    Object.entries(data).forEach(([name, running]) => applyStatus(name, running));
+                }} catch (_) {{}}
+            }}
+
+            async function callAction(name, action) {{
+                try {{
+                    const res = await fetch(`/ikaros/${{action}}/${{name}}`, {{ method: 'POST', headers: {{ 'Accept': 'application/json' }} }});
+                    if (res.ok) {{
+                        const data = await res.json();
+                        if (data && typeof data.running === 'boolean') applyStatus(name, data.running);
+                        if (data && data.message) showToast(`${{name}}: ${{data.message}}`);
+                    }} else {{
+                        showToast(`${{name}}: request failed (${{res.status}})`);
+                    }}
+                }} catch (err) {{
+                    showToast(`${{name}}: error ${{err}}`);
+                }} finally {{
+                    fetchStatus();
+                }}
+            }}
+
+            document.querySelectorAll('.btn-start').forEach(btn => {{
+                btn.addEventListener('click', (e) => {{
+                    const name = e.currentTarget.dataset.svc;
+                    callAction(name, 'start');
+                }});
+            }});
+
+            document.querySelectorAll('.btn-stop').forEach(btn => {{
+                btn.addEventListener('click', (e) => {{
+                    const name = e.currentTarget.dataset.svc;
+                    callAction(name, 'stop');
+                }});
+            }});
+
+            // Initial/periodic refresh
+            fetchStatus();
+            setInterval(fetchStatus, 30000);
+        </script>
     """
     return _render_page("Connect", content, str(request.url.path), services)
 

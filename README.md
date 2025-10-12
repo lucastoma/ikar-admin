@@ -29,10 +29,16 @@ Services covered
 - tailscale (daemon only; start may require sudo NOPASSWD)
 
 Run locally
-1) Install deps (inside ikaros):
+1) Install deps (current environment, no nested venv by default):
    pip install -r /workspace/ikar_apps/ikar-admin/requirements.txt
-2) Start:
+2) Start (uses current Python):
    bash /workspace/ikar_apps/ikar-admin/run.sh
+   - Auto-install deps to current interpreter (safe, prefers --user):
+     IKAR_ADMIN_BOOTSTRAP=1 bash /workspace/ikar_apps/ikar-admin/run.sh
+   - If your Python is PEP 668 externally-managed and blocks installs, allow breaking (optional):
+     IKAR_ADMIN_BOOTSTRAP=1 IKAR_ADMIN_PIP_BREAK=1 bash /workspace/ikar_apps/ikar-admin/run.sh
+   - To force a dedicated venv:
+     IKAR_ADMIN_USE_VENV=1 IKAR_ADMIN_BOOTSTRAP=1 bash /workspace/ikar_apps/ikar-admin/run.sh
 3) Open: http://127.0.0.1:8602/ikaros
 
 Optional: CLI helper
@@ -40,8 +46,10 @@ Optional: CLI helper
   podctl status | start <svc> | stop <svc> | logs <svc> [N]
 
 Tests
-- Script creates a venv and runs pytest:
+- By default uses current Python (no new venv):
   bash /workspace/ikar_apps/ikar-admin/run_tests.sh
+  - Dedicated venv: IKAR_ADMIN_TEST_USE_VENV=1 bash /workspace/ikar_apps/ikar-admin/run_tests.sh
+  - Bootstrap deps for tests: IKAR_ADMIN_TEST_BOOTSTRAP=1 bash /workspace/ikar_apps/ikar-admin/run_tests.sh
 - What’s covered:
   - HTML dashboard renders with services and controls
   - /status JSON shape

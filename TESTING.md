@@ -12,11 +12,15 @@
 - Panel uruchamiany jako usługa systemd `ikar-admin.service` oraz serwowany przez Nginx.
 
 ## Automatyczne testy (pytest)
-Polecenie uruchomienia (tworzy osobny venv):
+Polecenie uruchomienia (domyślnie bez tworzenia nowego venv — używa bieżącego Pythona):
 
 ```bash
 bash /workspace/ikar_apps/ikar-admin/run_tests.sh
 ```
+
+Opcje:
+- `IKAR_ADMIN_TEST_USE_VENV=1` — użyj dedykowanego venv do testów.
+- `IKAR_ADMIN_TEST_BOOTSTRAP=1` — zainstaluj zależności do wybranego interpretera przed uruchomieniem testów.
 
 Zakres testów:
 - `tests/test_app.py`:
