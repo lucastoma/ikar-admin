@@ -3,13 +3,45 @@ services:
     detect:
       - "ComfyUI/main.py"
       - "python .*ComfyUI/main.py"
-    start_cmd: >
-      PYTHONPATH=/home/dev/.local/lib/python3.12/site-packages:$PYTHONPATH
-      CUDA_VISIBLE_DEVICES=''
-      touch /workspace/comfyui.log ;
-      nohup /usr/local/bin/python /workspace/ComfyUI/main.py
-      --listen 0.0.0.0 --port ${COMFYUI_PORT:-18188} --cpu
-      &> /workspace/comfyui.log &
+    start_cmd: |
+      set -euo pipefail
+      DATA_DIR=${DATA_DIR:-/workspace/data}
+      MODELS_DIR=${MODELS_DIR:-${DATA_DIR}/models}
+      ASSETS_DIR=${ASSETS_DIR:-${DATA_DIR}/assets}
+      FLOWS_DIR=${FLOWS_DIR:-${DATA_DIR}/flows}
+      NODES_DIR=${NODES_DIR:-${DATA_DIR}/nodes}
+      COMFYUI_CONFIG_FILE=${COMFYUI_CONFIG_FILE:-${DATA_DIR}/extra_model_paths.yaml}
+
+      mkdir -p "$MODELS_DIR/checkpoints" "$MODELS_DIR/vae" "$MODELS_DIR/loras" \
+               "$MODELS_DIR/clip" "$MODELS_DIR/clip_vision" "$MODELS_DIR/controlnet" \
+               "$MODELS_DIR/upscale" "$MODELS_DIR/embeddings" "$MODELS_DIR/unet" \
+               "$MODELS_DIR/vae_approx" "$MODELS_DIR/configs" \
+               "$ASSETS_DIR" "$FLOWS_DIR" "$NODES_DIR"
+
+      if [ ! -f "$COMFYUI_CONFIG_FILE" ]; then
+        mkdir -p "$(dirname "$COMFYUI_CONFIG_FILE")"
+        cat > "$COMFYUI_CONFIG_FILE" <<YAML
+      checkpoints: ["$MODELS_DIR/checkpoints"]
+      vae: ["$MODELS_DIR/vae"]
+      lora: ["$MODELS_DIR/loras"]
+      clip: ["$MODELS_DIR/clip"]
+      clip_vision: ["$MODELS_DIR/clip_vision"]
+      controlnet: ["$MODELS_DIR/controlnet"]
+      upscale_models: ["$MODELS_DIR/upscale"]
+      embeddings: ["$MODELS_DIR/embeddings"]
+      unet: ["$MODELS_DIR/unet"]
+      vae_approx: ["$MODELS_DIR/vae_approx"]
+      configs: ["$MODELS_DIR/configs"]
+        YAML
+      fi
+
+      ln -sf "$COMFYUI_CONFIG_FILE" /workspace/ComfyUI/extra_model_paths.yaml
+
+      PYTHONPATH=/home/dev/.local/lib/python3.12/site-packages:$PYTHONPATH \
+      CUDA_VISIBLE_DEVICES='' \
+      nohup /usr/local/bin/python /workspace/ComfyUI/main.py \
+        --listen 0.0.0.0 --port ${COMFYUI_PORT:-18188} --cpu \
+        &> /workspace/comfyui.log &
     stop_patterns:
       - "ComfyUI/main.py"
     log_path: "/workspace/comfyui.log"

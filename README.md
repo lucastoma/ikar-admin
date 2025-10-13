@@ -9,6 +9,8 @@ Endpoints
 - GET /ikaros           – Connect page with service statuses.
 - GET /ikaros/terminal    – Web terminal.
 - GET /ikaros/logs        – Page for viewing logs.
+- GET /ikaros/env         – Environment viewer (filtered).
+- GET /ikaros/comfy       – Comfy config viewer/validator.
 - GET /ikaros/health    – JSON health (disk, ports)
 - GET /ikaros/status    – JSON services status
 - GET /ikaros/events?n=200 – Tail central action log (ik ar-admin-events.log)
@@ -44,6 +46,14 @@ Run locally
 Optional: CLI helper
 - A small wrapper is installed at /workspace/bin/podctl to call the API:
   podctl status | start <svc> | stop <svc> | logs <svc> [N]
+
+Data layout & config helpers
+- `DATA_DIR` (default `/workspace/data`) holds:
+  - `models/` (Comfy models)
+  - `assets/input/`, `assets/flow-elements/`
+  - `flows/`, `nodes/` (future)
+- `pod_config_ikarosopolis/scripts/setup_data_layout.sh` creates the layout and generates `extra_model_paths.yaml`.
+- `/ikaros/comfy` page lets you inspect current YAML mapping, validate directories, and reinstall the symlink to `ComfyUI/extra_model_paths.yaml`.
 
 Tests
 - By default uses current Python (no new venv):
