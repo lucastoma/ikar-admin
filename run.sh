@@ -8,7 +8,7 @@ mkdir -p /workspace
 chmod 777 /workspace
 
 export PYTHONUNBUFFERED=1
-export IKAR_ADMIN_PORT=${IKAR_ADMIN_PORT:-8602}
+export IKAR_ADMIN_PORT=${IKAR_ADMIN_PORT:-8610}
 
 # Load optional environment files (export all)
 set +a

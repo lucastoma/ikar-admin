@@ -2,7 +2,7 @@ import { ref, onUnmounted, watch } from 'vue';
 
 export const useLogs = (source: Ref<string>, n = 500) => {
   const config = useRuntimeConfig();
-  const apiBase = config.public.apiBase;
+  const apiBase = config.public.apiBase as string;
   const logs = ref<string>('');
   const error = ref<Error | null>(null);
   const polling = ref(true);
@@ -21,7 +21,7 @@ export const useLogs = (source: Ref<string>, n = 500) => {
     if (!polling.value) return;
     try {
       const url = getUrl();
-      const response = await $fetch<string>(url, { responseType: 'text' });
+      const response = await $fetch<string>(url, { responseType: 'text', baseURL: '' });
       logs.value = response;
       error.value = null;
     } catch (err) {

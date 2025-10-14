@@ -1,6 +1,6 @@
 export const useServiceActions = () => {
   const config = useRuntimeConfig();
-  const apiBase = config.public.apiBase;
+  const apiBase = config.public.apiBase as string;
 
   const startService = async (name: string) => {
     try {
@@ -8,6 +8,7 @@ export const useServiceActions = () => {
         `${apiBase}/start/${name}`,
         {
           method: 'POST',
+          baseURL: '',
         }
       );
       return response;
@@ -23,6 +24,7 @@ export const useServiceActions = () => {
         `${apiBase}/stop/${name}`,
         {
           method: 'POST',
+          baseURL: '',
         }
       );
       return response;

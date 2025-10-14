@@ -43,6 +43,8 @@ const loadRawConfig = async () => {
     rawConfig.value = text || '(empty)';
     configPath.value = path;
   } catch (err) {
+    rawConfig.value = '(failed to load config)';
+    configPath.value = '';
     showToast('Failed to load raw config.', 'error');
   }
 };
@@ -59,6 +61,7 @@ const doValidate = async () => {
     ];
     validationResult.value = lines.join('\n');
   } catch (err) {
+    validationResult.value = '(validation failed)';
     showToast('Failed to validate config.', 'error');
   }
 };
@@ -78,8 +81,9 @@ const doInstall = async () => {
   }
 };
 
-onMounted(() => {
-  loadRawConfig();
+onMounted(async () => {
+  await loadRawConfig();
+  await doValidate();
 });
 </script>
 

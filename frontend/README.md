@@ -10,7 +10,7 @@ To start the development server, run:
 npm run dev
 ```
 
-This will start a development server on `http://localhost:3000/ikaros/ui` with hot-reloading enabled. The Vite proxy is configured to forward API requests from `/ikaros` to the FastAPI backend running at `http://127.0.0.1:8602`.
+This will start a development server on `http://localhost:3000/ikaros/ui` with hot-reloading enabled. The Vite proxy forwards API requests from `/ikaros` to the FastAPI backend (default `http://127.0.0.1:8610`, configurable via `IKAR_ADMIN_HOST`, `IKAR_ADMIN_PORT`, `IKAR_ADMIN_PROTO` or `IKAR_ADMIN_BACKEND`).
 
 ## Building for Production
 

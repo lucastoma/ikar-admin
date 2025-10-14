@@ -1,7 +1,7 @@
 # ikar-admin Testing Strategy
 
 ## Goals
-- Upewnić się, że panel admina na 127.0.0.1:8602/ikaros działa lokalnie w dystrybucji ikaros.
+- Upewnić się, że panel admina na 127.0.0.1:8610/ikaros działa lokalnie w dystrybucji ikaros.
 - Zweryfikować, że reverse proxy Nginx pod http://127.0.0.1/ikaros (== http://localhost/ikaros z Windows) zwraca panel, a nie 502.
 - Pokryć kluczowe scenariusze API: status usług, start/stop, logi, health, obsługa błędów.
 - Zapewnić ręczne kroki kontrolne przy użyciu narzędzi dostępnych w WSL2 (curl/lynx), bez polegania na przeglądarce Windows.
@@ -35,7 +35,7 @@ Zakres testów:
 
 ## Testy ręczne (w przeglądarce i CLI)
 1. **Nawigacja i wygląd**
-   - Otwórz http://localhost/ikaros (lub port 8602).
+   - Otwórz http://localhost/ikaros (lub port 8610).
    - Sprawdź, czy widać ciemny motyw i nawigację "Connect | Terminal | Logs".
    - Przełączaj się między zakładkami, sprawdzając, czy podświetlenie aktywnej zakładki działa.
 2. **Strona Connect**
@@ -53,8 +53,8 @@ Zakres testów:
    - Sprawdź przycisk "Pause/Resume".
 5. **API (bez zmian)**
    ```bash
-   curl -fsS -X POST http://127.0.0.1:8602/ikaros/start/comfyui | jq
-   curl -fsS -X POST http://127.0.0.1:8602/ikaros/stop/comfyui  | jq
+   curl -fsS -X POST http://127.0.0.1:8610/ikaros/start/comfyui | jq
+   curl -fsS -X POST http://127.0.0.1:8610/ikaros/stop/comfyui  | jq
    ```
    Przy braku instalacji (`MISSING`) odpowiedź zawiera `ok: false` i komunikat `Service not installed`.
    Przy działającym panelu z formularza HTML akcje przekierowują na `/ikaros` (303).

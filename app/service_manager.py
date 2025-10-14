@@ -15,6 +15,37 @@ from typing import Dict, Optional, List, Any
 
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
+_ENV_VAR_DEFAULT_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
+_ENV_VAR_SIMPLE_RE = re.compile(r"\$(\w+)")
+
+
+def _expand_env_vars(value: str, extra_env: Optional[Dict[str, str]] = None) -> str:
+    """
+    Expand $VAR, ${VAR}, and ${VAR:-default} constructs using os.environ merged with extra_env.
+    Defaults follow POSIX shell semantics where unset/empty values fall back to the provided default.
+    """
+    if not isinstance(value, str):
+        return value
+
+    env: Dict[str, str] = {k: str(v) for k, v in os.environ.items()}
+    if extra_env:
+        env.update({str(k): str(v) for k, v in extra_env.items() if v is not None})
+
+    def replace_with_default(match: re.Match) -> str:
+        var = match.group(1)
+        default = match.group(3)
+        current = env.get(var)
+        if current is None or current == "":
+            return default or ""
+        return current
+
+    value = _ENV_VAR_DEFAULT_RE.sub(replace_with_default, value)
+
+    def replace_simple(match: re.Match) -> str:
+        var = match.group(1)
+        return env.get(var, "")
+
+    return _ENV_VAR_SIMPLE_RE.sub(replace_simple, value)
 
 
 def _run(cmd: str) -> subprocess.CompletedProcess:
@@ -148,6 +179,29 @@ class Service:
         except (IOError, ValueError):
             return False
 
+    def _expand_config_value(self, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+
+        extra_env: Dict[str, str] = {}
+        extra_env.update(self.env)
+        extra_env.setdefault("IKAR_SERVICE", self.name)
+        if self.port is not None:
+            port_str = str(self.port)
+            extra_env.setdefault("SERVICE_PORT", port_str)
+            extra_env.setdefault("IKAR_SERVICE_PORT", port_str)
+            extra_env.setdefault(f"{self.name.upper()}_PORT", port_str)
+
+        expanded = _expand_env_vars(value, extra_env)
+        try:
+            expanded = expanded.format_map(_SafeFormatDict(
+                port=str(self.port) if self.port is not None else "",
+                name=self.name,
+            ))
+        except Exception:
+            pass
+        return expanded
+
     def _run_health_check(self) -> bool:
         if not self.health:
             return False
@@ -167,12 +221,25 @@ class Service:
 
         if 'http' in self.health:
             http_conf = self.health['http']
-            url = http_conf.get('url')
+            url = self._expand_config_value(http_conf.get('url'))
             if not url: return False
             try:
                 import httpx
-                res = httpx.get(url, timeout=http_conf.get('timeout', 2))
-                return res.status_code == http_conf.get('expect', 200)
+                timeout = self._expand_config_value(http_conf.get('timeout'))
+                # httpx expects numeric timeout; fall back to default if conversion fails
+                if isinstance(timeout, str):
+                    try:
+                        timeout = float(timeout)
+                    except ValueError:
+                        timeout = http_conf.get('timeout', 2)
+                res = httpx.get(url, timeout=timeout if timeout is not None else 2)
+                expect = self._expand_config_value(http_conf.get('expect', 200))
+                if isinstance(expect, str):
+                    try:
+                        expect = int(expect)
+                    except ValueError:
+                        expect = 200
+                return res.status_code == expect
             except (ImportError, httpx.RequestError):
                 return False
 

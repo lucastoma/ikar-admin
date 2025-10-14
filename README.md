@@ -2,7 +2,7 @@ ikar-admin — minimal admin panel for Ikaros
 
 What it is
 - FastAPI service that wraps a catalogue of local services and exposes both a JSON API and a simple HTML dashboard.
-- Lives under prefix `/ikaros` on `127.0.0.1:8602` by default; the HTML UI remains for convenience while we prototype a Nuxt/Vue front end.
+- Lives under prefix `/ikaros` on `127.0.0.1:8610` by default (configurable via `IKAR_ADMIN_PORT`); the HTML UI remains for convenience while we prototype a Nuxt/Vue front end.
 - Service metadata, lifecycle commands, and observability settings are now expressed entirely in `config.yaml`, so any UI can be rebuilt on top of the same contract.
 
 Endpoints
@@ -46,7 +46,7 @@ Run locally
    - Bootstrap deps into the interpreter: `IKAR_ADMIN_BOOTSTRAP=1 .../run.sh`
    - Allow install into externally-managed Python: add `IKAR_ADMIN_PIP_BREAK=1`
    - Force dedicated venv: `IKAR_ADMIN_USE_VENV=1 IKAR_ADMIN_BOOTSTRAP=1 .../run.sh`
-3) Browse to `http://127.0.0.1:8602/ikaros`
+3) Browse to `http://127.0.0.1:8610/ikaros`
 
 Tests
 - Quick run (reuses interpreter): `bash /workspace/ikar_apps/ikar-admin/run_tests.sh`
@@ -129,4 +129,4 @@ For a deeper schema reference and API payload examples see `doc/service_config_s
 Notes
 - code-server detection prefers the local binary at `/workspace/code-server` before falling back to `PATH`.
 - Tailscale start uses `sudo -n tailscaled` in userspace networking mode (`/workspace/tailscale.state`).
-- To expose the UI at `http://localhost/ikaros` (port 80) front it with an Nginx reverse proxy pointing to `127.0.0.1:8602`.
+- To expose the UI at `http://localhost/ikaros` (port 80) front it with an Nginx reverse proxy pointing to `127.0.0.1:8610`.

@@ -2,11 +2,13 @@ import { ref, onUnmounted } from 'vue';
 
 export const useStatusPoll = (interval = 4000) => {
   const config = useRuntimeConfig();
-  const apiBase = config.public.apiBase;
+  const apiBase = config.public.apiBase as string;
   const statusMap = ref<Record<string, boolean>>({});
-  const { data, error, execute } = useFetch<Record<string, boolean>>(`${apiBase}/status`, {
+  const url = `${apiBase}/status`;
+  const { data, error, execute } = useFetch<Record<string, boolean>>(url, {
     immediate: false,
     server: false,
+    baseURL: '',
   });
 
   let intervalId: NodeJS.Timeout | null = null;

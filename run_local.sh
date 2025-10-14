@@ -10,7 +10,7 @@ chmod 777 ./local_workspace
 export DATA_DIR=./local_workspace
 
 export PYTHONUNBUFFERED=1
-export IKAR_ADMIN_PORT=${IKAR_ADMIN_PORT:-8602}
+export IKAR_ADMIN_PORT=${IKAR_ADMIN_PORT:-8610}
 
 # Configuration (no nested venv by default)
 PY_BIN=${IKAR_ADMIN_PY:-python3}

@@ -34,15 +34,21 @@ if NUXT_DIR.exists() and any(NUXT_DIR.iterdir()):
 async def websocket_pty(ws: WebSocket):
     await ws.accept()
 
-    # Basic origin/host check: allow when same host:port or when Origin missing
+    # Basic origin/host check. In production we want same-origin.
+    # During local dev (Nuxt on :300x proxying to FastAPI on :8610),
+    # allow localhost/127.0.0.1 even if ports differ.
     origin = ws.headers.get("origin", "")
     host = ws.headers.get("host", "")
     if origin:
         try:
-            origin_host = origin.split("://", 1)[-1]
+            from urllib.parse import urlparse
+            origin_parsed = urlparse(origin)
+            origin_host = origin_parsed.hostname or ""
         except Exception:
-            origin_host = origin
-        if origin_host != host:
+            origin_host = origin.split("://", 1)[-1].split(":", 1)[0]
+        host_host = host.split(":", 1)[0]
+        both_local = origin_host in {"localhost", "127.0.0.1"} and host_host in {"localhost", "127.0.0.1"}
+        if origin_host and host_host and origin_host != host_host and not both_local:
             await ws.close(code=1008, reason="Invalid origin")
             return
 
@@ -131,6 +137,12 @@ def _port_open(p: int) -> bool:
             return True
     except OSError:
         return False
+
+
+def _expand_path(value: str | None) -> str:
+    if not value:
+        return ""
+    return os.path.expanduser(os.path.expandvars(value))
 
 
 @router.get("/health")
@@ -786,7 +798,7 @@ def env_json(prefix: str = ""):
 # ---------------- Comfy Config Panel ---------------- #
 
 def _paths_default_models() -> dict:
-    data_dir = os.environ.get("DATA_DIR", "/workspace/data")
+    data_dir = _expand_path(os.environ.get("DATA_DIR", "/workspace/data")) or "/workspace/data"
     m = os.path.join(data_dir, "models")
     return {
         "checkpoints": [f"{m}/checkpoints"],
@@ -804,8 +816,10 @@ def _paths_default_models() -> dict:
 
 
 def _ensure_comfy_config() -> tuple[str, dict]:
-    data_dir = os.environ.get("DATA_DIR", "/workspace/data")
-    config_path = os.environ.get("COMFYUI_CONFIG_FILE", f"{data_dir}/extra_model_paths.yaml")
+    data_dir = _expand_path(os.environ.get("DATA_DIR", "/workspace/data")) or "/workspace/data"
+    default_path = os.path.join(data_dir, "extra_model_paths.yaml")
+    config_raw = os.environ.get("COMFYUI_CONFIG_FILE") or default_path
+    config_path = _expand_path(config_raw) or default_path
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     if not os.path.exists(config_path):
         with open(config_path, "w", encoding="utf-8") as fh:
@@ -905,7 +919,9 @@ def comfy_config_validate():
             if isinstance(arr, list):
                 for p in arr:
                     if isinstance(p, str):
-                        paths.append(os.path.expandvars(p))
+                        resolved = _expand_path(p)
+                        if resolved:
+                            paths.append(resolved)
     except Exception:
         pass
     present = [p for p in paths if os.path.isdir(p)]

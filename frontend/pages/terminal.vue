@@ -18,9 +18,34 @@ const statusColor = ref('#8b949e');
 let term;
 let ws;
 let fitAddon;
+let resizeHandler;
 
 onMounted(() => {
   if (process.client) {
+    const config = useRuntimeConfig();
+    const publicConfig = (config && config.public) || {};
+    const apiBase =
+      typeof publicConfig.apiBase === 'string' && publicConfig.apiBase.length > 0
+        ? publicConfig.apiBase
+        : '/ikaros';
+    const apiOrigin =
+      typeof publicConfig.apiOrigin === 'string' && publicConfig.apiOrigin.length > 0
+        ? publicConfig.apiOrigin
+        : window.location.origin;
+
+    const buildWsUrl = () => {
+      try {
+        const origin = new URL(apiOrigin);
+        origin.protocol = origin.protocol === 'https:' ? 'wss:' : 'ws:';
+        const base = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase;
+        return `${origin.origin}${base}/ws/pty`;
+      } catch (err) {
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const base = apiBase.startsWith('/') ? apiBase : `/${apiBase}`;
+        return `${wsProtocol}://${window.location.host}${base}/ws/pty`;
+      }
+    };
+
     term = new Terminal({
       cursorBlink: true,
       theme: {
@@ -35,8 +60,10 @@ onMounted(() => {
     term.open(terminalContainer.value);
     fitAddon.fit();
 
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${wsProtocol}://${window.location.host}/ikaros/ws/pty`;
+    resizeHandler = () => fitAddon.fit();
+    window.addEventListener('resize', resizeHandler);
+
+    const wsUrl = buildWsUrl();
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -72,8 +99,6 @@ onMounted(() => {
         ws.send(JSON.stringify({ type: 'resize', cols, rows }));
       }
     });
-
-    window.addEventListener('resize', () => fitAddon.fit());
   }
 });
 
@@ -84,8 +109,8 @@ onUnmounted(() => {
   if (term) {
     term.dispose();
   }
-  if (fitAddon) {
-    window.removeEventListener('resize', () => fitAddon.fit());
+  if (resizeHandler) {
+    window.removeEventListener('resize', resizeHandler);
   }
 });
 </script>
