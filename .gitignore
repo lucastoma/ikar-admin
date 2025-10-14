@@ -116,3 +116,10 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Custom
+/local_workspace
+/fastapiapp.log
+/npm_output.log
+jules-scratch/
+app/static/nuxt/

@@ -25,6 +25,10 @@ STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+NUXT_DIR = Path(__file__).parent / "static" / "nuxt"
+if NUXT_DIR.exists() and any(NUXT_DIR.iterdir()):
+    app.mount("/ikaros/ui", StaticFiles(directory=NUXT_DIR, html=True), name="nuxt")
+
 
 @router.websocket("/ws/pty")
 async def websocket_pty(ws: WebSocket):
