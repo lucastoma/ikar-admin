@@ -1,99 +1,213 @@
 services:
   comfyui:
+    meta:
+      title: "ComfyUI"
+      description: "Nodes-based workflow UI for image generation."
+      tags: ["ml", "ui"]
+      links:
+        - label: "Open UI"
+          url: "http://localhost:{port}/"
+    runtime:
+      workdir: "/workspace/ComfyUI"
+      env:
+        CUDA_VISIBLE_DEVICES: ""
+      shell: "/usr/bin/env bash"
+    lifecycle:
+      start:
+        script: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          DATA_DIR=${DATA_DIR:-/workspace/data}
+          MODELS_DIR=${MODELS_DIR:-${DATA_DIR}/models}
+          ASSETS_DIR=${ASSETS_DIR:-${DATA_DIR}/assets}
+          FLOWS_DIR=${FLOWS_DIR:-${DATA_DIR}/flows}
+          NODES_DIR=${NODES_DIR:-${DATA_DIR}/nodes}
+          COMFYUI_CONFIG_FILE=${COMFYUI_CONFIG_FILE:-${DATA_DIR}/extra_model_paths.yaml}
+          LOG_FILE=${LOG_FILE:-/workspace/comfyui.log}
+          PID_FILE=${PID_FILE:-/workspace/comfyui.pid}
+          PORT=${COMFYUI_PORT:-18188}
+
+          mkdir -p \
+            "$MODELS_DIR/checkpoints" "$MODELS_DIR/vae" "$MODELS_DIR/loras" \
+            "$MODELS_DIR/clip" "$MODELS_DIR/clip_vision" "$MODELS_DIR/controlnet" \
+            "$MODELS_DIR/upscale" "$MODELS_DIR/embeddings" "$MODELS_DIR/unet" \
+            "$MODELS_DIR/vae_approx" "$MODELS_DIR/configs" \
+            "$ASSETS_DIR" "$FLOWS_DIR" "$NODES_DIR"
+
+          if [ ! -f "$COMFYUI_CONFIG_FILE" ]; then
+            mkdir -p "$(dirname "$COMFYUI_CONFIG_FILE")"
+            cat > "$COMFYUI_CONFIG_FILE" <<YAML
+          checkpoints: ["$MODELS_DIR/checkpoints"]
+          vae: ["$MODELS_DIR/vae"]
+          lora: ["$MODELS_DIR/loras"]
+          clip: ["$MODELS_DIR/clip"]
+          clip_vision: ["$MODELS_DIR/clip_vision"]
+          controlnet: ["$MODELS_DIR/controlnet"]
+          upscale_models: ["$MODELS_DIR/upscale"]
+          embeddings: ["$MODELS_DIR/embeddings"]
+          unet: ["$MODELS_DIR/unet"]
+          vae_approx: ["$MODELS_DIR/vae_approx"]
+          configs: ["$MODELS_DIR/configs"]
+            YAML
+          fi
+
+          ln -sf "$COMFYUI_CONFIG_FILE" /workspace/ComfyUI/extra_model_paths.yaml
+          touch "$LOG_FILE"
+
+          PYTHONPATH="/home/dev/.local/lib/python3.12/site-packages:${PYTHONPATH:-}" \
+          CUDA_VISIBLE_DEVICES='' \
+          nohup /usr/local/bin/python /workspace/ComfyUI/main.py \
+            --listen 0.0.0.0 --port "${PORT}" --cpu \
+            >> "${LOG_FILE}" 2>&1 &
+          echo $! > "${PID_FILE}"
+        timeout: 15.0
+      stop:
+        pid_file: "/workspace/comfyui.pid"
+        patterns:
+          - "ComfyUI/main.py"
+        timeout: 12.0
+    observability:
+      log_path: "/workspace/comfyui.log"
+      port: 18188
+      health:
+        http:
+          url: "http://127.0.0.1:${COMFYUI_PORT:-18188}/"
+          timeout: 5
     detect:
       - "ComfyUI/main.py"
       - "python .*ComfyUI/main.py"
-    start_cmd: |
-      set -euo pipefail
-      DATA_DIR=${DATA_DIR:-/workspace/data}
-      MODELS_DIR=${MODELS_DIR:-${DATA_DIR}/models}
-      ASSETS_DIR=${ASSETS_DIR:-${DATA_DIR}/assets}
-      FLOWS_DIR=${FLOWS_DIR:-${DATA_DIR}/flows}
-      NODES_DIR=${NODES_DIR:-${DATA_DIR}/nodes}
-      COMFYUI_CONFIG_FILE=${COMFYUI_CONFIG_FILE:-${DATA_DIR}/extra_model_paths.yaml}
-
-      mkdir -p "$MODELS_DIR/checkpoints" "$MODELS_DIR/vae" "$MODELS_DIR/loras" \
-               "$MODELS_DIR/clip" "$MODELS_DIR/clip_vision" "$MODELS_DIR/controlnet" \
-               "$MODELS_DIR/upscale" "$MODELS_DIR/embeddings" "$MODELS_DIR/unet" \
-               "$MODELS_DIR/vae_approx" "$MODELS_DIR/configs" \
-               "$ASSETS_DIR" "$FLOWS_DIR" "$NODES_DIR"
-
-      if [ ! -f "$COMFYUI_CONFIG_FILE" ]; then
-        mkdir -p "$(dirname "$COMFYUI_CONFIG_FILE")"
-        cat > "$COMFYUI_CONFIG_FILE" <<YAML
-      checkpoints: ["$MODELS_DIR/checkpoints"]
-      vae: ["$MODELS_DIR/vae"]
-      lora: ["$MODELS_DIR/loras"]
-      clip: ["$MODELS_DIR/clip"]
-      clip_vision: ["$MODELS_DIR/clip_vision"]
-      controlnet: ["$MODELS_DIR/controlnet"]
-      upscale_models: ["$MODELS_DIR/upscale"]
-      embeddings: ["$MODELS_DIR/embeddings"]
-      unet: ["$MODELS_DIR/unet"]
-      vae_approx: ["$MODELS_DIR/vae_approx"]
-      configs: ["$MODELS_DIR/configs"]
-        YAML
-      fi
-
-      ln -sf "$COMFYUI_CONFIG_FILE" /workspace/ComfyUI/extra_model_paths.yaml
-
-      PYTHONPATH=/home/dev/.local/lib/python3.12/site-packages:$PYTHONPATH \
-      CUDA_VISIBLE_DEVICES='' \
-      nohup /usr/local/bin/python /workspace/ComfyUI/main.py \
-        --listen 0.0.0.0 --port ${COMFYUI_PORT:-18188} --cpu \
-        &> /workspace/comfyui.log &
-    stop_patterns:
-      - "ComfyUI/main.py"
-    log_path: "/workspace/comfyui.log"
-    port: 18188
     available: "exists('/workspace/ComfyUI/main.py')"
     systemd_unit: "comfyui-ikar"
 
   code:
+    meta:
+      title: "code-server"
+      description: "VS Code running as a server process."
+      tags: ["ide"]
+      links:
+        - label: "Open IDE"
+          url: "http://localhost:{port}/"
+    observability:
+      log_path: "/workspace/code-server.log"
+      port: 8445
     detect: []
-    start_cmd: null
-    stop_patterns: null
-    log_path: "/workspace/code-server.log"
-    port: 8445
     available: "which('code-server') or exists('/etc/systemd/system/code-server-ikar.service')"
     systemd_unit: "code-server-ikar"
 
   filebrowser:
+    meta:
+      title: "Filebrowser"
+      description: "Web UI for browsing the workspace filesystem."
+      tags: ["storage", "ui"]
+      links:
+        - label: "Open UI"
+          url: "http://localhost:{port}/"
+    runtime:
+      shell: "/usr/bin/env bash"
+    lifecycle:
+      start:
+        script: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          LOG_FILE=${LOG_FILE:-/workspace/filebrowser.log}
+          PID_FILE=${PID_FILE:-/workspace/filebrowser.pid}
+          PORT=${FILEBROWSER_PORT:-8085}
+          BIN=${FILEBROWSER_BIN:-/workspace/bin/filebrowser}
+
+          touch "$LOG_FILE"
+          nohup "$BIN" \
+            --port "${PORT}" \
+            --address 0.0.0.0 \
+            --database /workspace/filebrowser.db \
+            --root / \
+            >> "${LOG_FILE}" 2>&1 &
+          echo $! > "${PID_FILE}"
+        timeout: 15.0
+      stop:
+        pid_file: "/workspace/filebrowser.pid"
+        patterns:
+          - "filebrowser"
+        timeout: 10.0
+    observability:
+      log_path: "/workspace/filebrowser.log"
+      port: 8085
     detect:
       - "filebrowser"
-    start_cmd: >
-      touch /workspace/filebrowser.log ;
-      nohup
-      ${FILEBROWSER_BIN:-/workspace/bin/filebrowser} --port ${FILEBROWSER_PORT:-8085} --address 0.0.0.0 --database /workspace/filebrowser.db
-      --root / &> /workspace/filebrowser.log &
-    stop_patterns:
-      - "filebrowser"
-    log_path: "/workspace/filebrowser.log"
-    port: 8085
     available: "which('filebrowser') or exists('/workspace/bin/filebrowser')"
     systemd_unit: "filebrowser-ikar"
 
   tailscale:
+    meta:
+      title: "Tailscale"
+      description: "Userspace tailscaled daemon (requires sudo)."
+      tags: ["network"]
+    runtime:
+      shell: "/usr/bin/env bash"
+    lifecycle:
+      start:
+        script: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          LOG_FILE=${LOG_FILE:-/workspace/tailscale.log}
+
+          touch "$LOG_FILE"
+          sudo -n tailscaled --state=/workspace/tailscale.state --tun=userspace-networking \
+            >> "$LOG_FILE" 2>&1 &
+        timeout: 10.0
+      stop:
+        patterns:
+          - "tailscaled"
+        timeout: 10.0
+    observability:
+      log_path: "/workspace/tailscale.log"
     detect:
       - "tailscaled"
-    start_cmd: "(sudo -n tailscaled --state=/workspace/tailscale.state --tun=userspace-networking &>> /workspace/tailscale.log &)"
-    stop_patterns:
-      - "tailscaled"
-    log_path: "/workspace/tailscale.log"
     available: "which('tailscaled')"
 
   my_api:
-    detect: ["python .*my_api.py"]
-    start_cmd: "nohup /usr/bin/python /workspace/my_api.py >> /workspace/my_api.log 2>&1 &"
-    stop_patterns: ["my_api.py"]
-    log_path: "/workspace/my_api.log"
-    port: 9000
+    meta:
+      title: "My API"
+      description: "Example internal API process."
+      tags: ["api"]
+      links:
+        - label: "Open API"
+          url: "http://localhost:{port}/"
+    runtime:
+      workdir: "/workspace"
+      shell: "/usr/bin/env bash"
+      env:
+        MY_API_KEY: "supersecret"
+    lifecycle:
+      start:
+        script: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          LOG_FILE=${LOG_FILE:-/workspace/my_api.log}
+          PID_FILE=${PID_FILE:-/workspace/my_api.pid}
+          PORT=${MY_API_PORT:-9000}
+
+          touch "$LOG_FILE"
+          nohup /usr/bin/python /workspace/my_api.py \
+            --port "${PORT}" \
+            >> "${LOG_FILE}" 2>&1 &
+          echo $! > "${PID_FILE}"
+        timeout: 10.0
+      stop:
+        pid_file: "/workspace/my_api.pid"
+        patterns:
+          - "my_api.py"
+        timeout: 8.0
+    observability:
+      log_path: "/workspace/my_api.log"
+      port: 9000
+      health:
+        http:
+          url: "http://127.0.0.1:9000/health"
+          timeout: 5
+    detect:
+      - "python .*my_api.py"
     available: "exists('/workspace/my_api.py')"
-    pid_file: "/workspace/my_api.pid"
-    workdir: "/workspace"
-    env:
-      MY_API_KEY: "supersecret"
-    health:
-      http:
-        url: "http://127.0.0.1:9000/health"
-        timeout: 5

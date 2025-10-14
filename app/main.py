@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Response, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, APIRouter, Response, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from . import service_manager as sm
@@ -15,6 +15,7 @@ import fcntl
 import signal
 import yaml
 from pathlib import Path
+from html import escape
 
 
 app = FastAPI(title="ikar-admin", docs_url=None, redoc_url=None)
@@ -152,6 +153,24 @@ def status():
     return JSONResponse({k: v.is_running() for k, v in services.items()})
 
 
+@router.get("/services")
+def services_catalog():
+    services = sm.load_services_from_config(sm.CONFIG_PATH)
+    items = []
+    for svc in services.values():
+        items.append(svc.summary(running=svc.is_running()))
+    return JSONResponse({"services": items})
+
+
+@router.get("/services/{svc_name}")
+def service_detail(svc_name: str):
+    services = sm.load_services_from_config(sm.CONFIG_PATH)
+    svc = services.get(svc_name)
+    if not svc:
+        raise HTTPException(status_code=404, detail="unknown service")
+    return JSONResponse(svc.detail(running=svc.is_running()))
+
+
 @router.get("/logs/{svc}")
 def logs(svc: str, n: int = 200):
     services = sm.load_services_from_config(sm.CONFIG_PATH)
@@ -214,7 +233,7 @@ def _render_page(title: str, content: str, current_path: str, services: dict = N
         <meta charset="UTF-8">
         <title>{title} - ikar-admin</title>
         <link rel="stylesheet" href="/static/xterm/xterm.css">
-        <script src="/static/xterm/xterm.js"></script>
+        <script src="/static/xterm/xterm.min.js"></script>
         <style>
             :root {{
                 --bg-color: #0d1117;
@@ -362,19 +381,30 @@ def index(request: Request):
         running = svc.is_running()
         status_label = "UP" if running else ("MISSING" if not svc.available else "DOWN")
         status_class = "status-" + status_label.lower()
+        display_name = svc.display_name or name
+        display_html = escape(display_name)
+        title_attr = f" title='{escape(svc.description)}'" if svc.description else ""
+        links = svc.resolved_links()
         open_link = ""
-        if svc.available and svc.port:
+        if links:
+            primary = links[0]
+            url = primary.get("url")
+            label = primary.get("label", "Open")
+            if url:
+                open_link = f"<a href='{url}' target='_blank'>{escape(label)}</a>"
+        elif svc.available and svc.port:
             open_link = f"<a href='http://localhost:{svc.port}/' target='_blank'>Open</a>"
 
-        disabled_attr = " disabled" if not svc.available else ""
-        controls = (
-            f"<button class='btn-start' data-svc='{name}'{disabled_attr}>Start</button> "
-            f"<button class='btn-stop' data-svc='{name}'{disabled_attr} style='margin-left:6px'>Stop</button>"
-        )
+        control_buttons = []
+        if svc.supports_start():
+            control_buttons.append(f"<button class='btn-start' data-svc='{name}'>Start</button>")
+        if svc.supports_stop():
+            control_buttons.append(f"<button class='btn-stop' data-svc='{name}' style='margin-left:6px'>Stop</button>")
+        controls = " ".join(control_buttons) if control_buttons else "&mdash;"
 
         rows.append(
             f"<tr id='row-{name}'>"
-            f"<td><b>{name}</b></td>"
+            f"<td><b{title_attr}>{display_html}</b></td>"
             f"<td><span id='status-{name}' data-available='{str(svc.available).lower()}' class='status-badge {status_class}'>{status_label}</span></td>"
             f"<td>{open_link}</td>"
             f"<td>{controls}</td>"

@@ -15,8 +15,8 @@ Aplikacja jest zbudowana w oparciu o framework **FastAPI**, co zapewnia wysoką 
 
 -   **Punkt wejściowy (`main.py`):** Główny plik aplikacji, który tworzy instancję FastAPI. Definiuje wszystkie endpointy API w ramach `APIRouter` z prefiksem `/ikaros`. Odpowiada również za renderowanie interfejsu użytkownika w formacie HTML.
 -   **Logika Biznesowa (`service_manager.py`):** Ten moduł stanowi serce aplikacji. Odpowiada za definicję, wykrywanie i zarządzanie usługami.
-    -   **Klasa `Service`:** Struktura danych (`@dataclass`) przechowująca wszystkie informacje o danej usłudze (nazwa, komendy start/stop, ścieżka logu, port, dostępność).
-    -   **`build_services()`:** Funkcja-fabryka, która tworzy i zwraca słownik skonfigurowanych obiektów `Service`. Konfiguracja jest w dużej mierze zakodowana na stałe (hardcoded).
+    -   **Klasa `Service`:** Struktura danych (`@dataclass`) przechowująca pełny opis usługi (metadane, komendy start/stop, ścieżki logów, porty, zdrowie itp.) wraz z metodami serializującymi dane do JSON.
+    -   **`load_services_from_config()`:** Wczytuje `config.yaml`, wspiera nową hierarchię (`meta`, `runtime`, `lifecycle`, `observability`) i zapewnia wsteczną kompatybilność z wcześniejszym płaskim formatem.
     -   **Wykrywanie procesów:** Logika opiera się na przeszukiwaniu `cmdline` w systemie plików `/proc` oraz sprawdzaniu, czy porty są otwarte. W przypadku dostępności `systemd`, preferowane jest użycie `systemctl`.
 -   **Interfejs Użytkownika (UI):** Aplikacja serwuje pojedynczą stronę HTML (`index()` w `main.py`), która jest dynamicznie generowana po stronie serwera. Strona zawiera tabelę z listą usług i ich statusem. Interakcje (start/stop, odświeżanie statusu, podgląd logów) są realizowane za pomocą **czystego JavaScriptu (Vanilla JS)**, który komunikuje się z endpointami API aplikacji.
 -   **Routing:** Wszystkie ścieżki są zgrupowane pod prefiksem `/ikaros`, co ułatwia integrację z reverse proxy (np. Nginx).
@@ -33,13 +33,16 @@ Struktura jest prosta i czytelna, z wyraźnym podziałem odpowiedzialności mię
 -   **Szybki Dostęp:** Bezpośrednie linki do interfejsów webowych zarządzanych usług (np. ComfyUI, code-server).
 
 ### API
--   `GET /ikaros`: Zwraca główny panel w formacie HTML.
--   `GET /ikaros/health`: Zwraca szczegółowy raport o stanie systemu w formacie JSON (wykorzystanie dysku, status portów, status usług).
--   `GET /ikaros/status`: Zwraca uproszczony status (true/false) dla każdej usługi.
--   `GET /ikaros/events`: Zwraca `N` ostatnich linii z centralnego pliku logów zdarzeń.
--   `GET /ikaros/logs/{svc}`: Zwraca `N` ostatnich linii z pliku logu dla konkretnej usługi.
--   `POST /ikaros/start/{svc}`: Uruchamia wskazaną usługę.
--   `POST /ikaros/stop/{svc}`: Zatrzymuje wskazaną usługę.
+-   `GET /ikaros`: Zwraca główny panel w formacie HTML (fallback UI).
+-   `GET /ikaros/services`: Zwraca katalog usług z metadanymi i bieżącym statusem.
+-   `GET /ikaros/services/{svc}`: Szczegóły wybranej usługi (meta, lifecycle, health config).
+-   `GET /ikaros/status`: Uproszczony status (`{nazwa: bool}`) do lekkiego pollingu.
+-   `GET /ikaros/health`: Raport o stanie systemu (dysk, porty, status usług).
+-   `GET /ikaros/events`: `N` ostatnich linii z centralnego logu zdarzeń.
+-   `GET /ikaros/logs/{svc}`: `N` ostatnich linii z logu konkretnej usługi.
+-   `GET /ikaros/env.json`: Zawartość zmiennych środowiskowych z filtrowaniem prefixów.
+-   `POST /ikaros/start/{svc}` / `POST /ikaros/stop/{svc}`: Sterowanie cyklem życia.
+-   `/ikaros/comfy/...` + `WS /ikaros/ws/pty`: Pomocnicze endpointy dla ComfyUI oraz terminala.
 
 ## 4. Zależności (Dependencies)
 
@@ -79,6 +82,5 @@ Strategia testowania jest kompleksowa jak na rozmiar aplikacji i pokrywa kluczow
 
 ### Potencjalne Obszary do Poprawy i Ryzyka
 -   **Bezpieczeństwo (Krytyczne Ryzyko):** Największą słabością aplikacji jest **całkowity brak mechanizmów uwierzytelniania i autoryzacji**. Każdy, kto ma dostęp do portu aplikacji, może dowolnie zarządzać usługami. Wymaganie `sudo NOPASSWD` dla niektórych operacji stanowi dodatkowe, poważne ryzyko bezpieczeństwa.
--   **Konfiguracja "Hardcoded":** Definicje usług są zaszyte bezpośrednio w kodzie (`service_manager.py`). Przeniesienie ich do zewnętrznego pliku konfiguracyjnego (np. `config.yaml`) znacznie zwiększyłoby elastyczność i ułatwiło dodawanie nowych usług bez modyfikacji kodu.
 -   **Kruchość Zarządzania Procesami:** Poleganie na `pkill -f` z dopasowaniem do wzorca bywa zawodne. Bardziej jednoznaczny wzorzec lub zarządzanie numerami PID (zapisywanymi przy starcie usługi) byłoby solidniejszym rozwiązaniem.
 -   **Przenośność:** Silne uzależnienie od specyfiki systemu Linux (np. `/proc`, `pkill`) ogranicza możliwość uruchomienia aplikacji na innych systemach operacyjnych (np. macOS, Windows).

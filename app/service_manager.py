@@ -5,10 +5,13 @@ import subprocess
 import re
 import time
 import yaml
+import tempfile
+import textwrap
+import shlex
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
@@ -89,11 +92,36 @@ def _append_event(service: str, action: str, message: str, success: bool) -> Non
         pass
 
 
+def _to_float(value, default: float) -> float:
+    try:
+        if value is None:
+            raise TypeError
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(value, default: Optional[int] = None) -> Optional[int]:
+    try:
+        if value is None:
+            raise TypeError
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+class _SafeFormatDict(dict):
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
 @dataclass
 class Service:
     name: str
     detect: List[str] = field(default_factory=list)
     start_cmd: Optional[str] = None
+    start_script: Optional[str] = None
+    start_shell: Optional[str] = None
     stop_patterns: Optional[List[str]] = None
     log_path: Optional[str] = None
     port: Optional[int] = None
@@ -105,6 +133,10 @@ class Service:
     start_timeout: float = 8.0
     stop_timeout: float = 8.0
     health: Dict = field(default_factory=dict)
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
+    links: List[Dict[str, Any]] = field(default_factory=list)
 
     def _is_pid_running(self):
         if not self.pid_file or not os.path.exists(self.pid_file):
@@ -175,6 +207,118 @@ class Service:
 
         return False
 
+    def resolved_links(self) -> List[Dict[str, Any]]:
+        replacements = _SafeFormatDict(
+            port=str(self.port) if self.port is not None else "",
+            name=self.name,
+        )
+        resolved = []
+        for item in self.links:
+            tpl = item.get("url_template") or item.get("url")
+            entry = {k: v for k, v in item.items() if k != "url_template"}
+            if tpl:
+                try:
+                    entry["url"] = tpl.format_map(replacements)
+                except Exception:
+                    entry["url"] = tpl
+            resolved.append(entry)
+        return resolved
+
+    def supports_start(self) -> bool:
+        if not self.available:
+            return False
+        return bool(self.systemd_unit or self.start_script or self.start_cmd)
+
+    def supports_stop(self) -> bool:
+        if not self.available:
+            return False
+        return bool(self.systemd_unit or self.pid_file or self.stop_patterns)
+
+    def summary(self, running: Optional[bool] = None) -> Dict[str, Any]:
+        active = self.is_running() if running is None else running
+        return {
+            "name": self.name,
+            "title": self.display_name or self.name,
+            "description": self.description,
+            "tags": self.tags,
+            "available": self.available,
+            "running": active,
+            "port": self.port,
+            "log_path": self.log_path,
+            "links": self.resolved_links(),
+            "supports": {
+                "start": self.supports_start(),
+                "stop": self.supports_stop(),
+                "logs": bool(self.log_path),
+                "terminal": False,
+            },
+        }
+
+    def detail(self, running: Optional[bool] = None) -> Dict[str, Any]:
+        active = self.is_running() if running is None else running
+        return {
+            "name": self.name,
+            "meta": {
+                "title": self.display_name or self.name,
+                "description": self.description,
+                "tags": self.tags,
+                "links": self.resolved_links(),
+            },
+            "status": {
+                "available": self.available,
+                "running": active,
+                "port": self.port,
+                "log_path": self.log_path,
+                "health": self.health,
+            },
+            "lifecycle": {
+                "has_start": self.supports_start(),
+                "has_stop": self.supports_stop(),
+                "systemd_unit": self.systemd_unit,
+                "pid_file": self.pid_file,
+                "start_timeout": self.start_timeout,
+                "stop_timeout": self.stop_timeout,
+            },
+            "detect": self.detect,
+        }
+
+    def _run_start_script(self, run_env: Dict[str, str]) -> subprocess.CompletedProcess:
+        script_body = textwrap.dedent(self.start_script or "").strip()
+        if not script_body:
+            raise ValueError("start script empty")
+
+        if not script_body.startswith("#!"):
+            interpreter = (self.start_shell or "/bin/sh").strip() or "/bin/sh"
+            if interpreter.startswith("#!"):
+                shebang = interpreter
+            else:
+                shebang = f"#!{interpreter}"
+            script_body = f"{shebang}\n{script_body}"
+
+        script_body = script_body.rstrip() + "\n"
+
+        with tempfile.NamedTemporaryFile("w", delete=False, prefix=f"{self.name}_start_", suffix=".sh") as tmp:
+            tmp.write(script_body)
+            script_path = tmp.name
+
+        os.chmod(script_path, 0o750)
+
+        try:
+            process = subprocess.run(
+                [script_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=self.workdir,
+                env=run_env,
+            )
+        finally:
+            try:
+                os.remove(script_path)
+            except OSError:
+                pass
+        return process
+
     def start(self) -> (bool, str):
         if not self.available:
             msg = "Service not installed"
@@ -186,12 +330,12 @@ class Service:
             return True, msg
         if self.systemd_unit and shutil.which("systemctl"):
             res = _run(f"sudo -n systemctl start {self.systemd_unit}")
-            ok = _wait_for(self.is_running, True)
+            ok = _wait_for(self.is_running, True, timeout=self.start_timeout)
             msg = res.stdout.strip() or "systemd start"
             success = res.returncode == 0 and ok
             _append_event(self.name, "start", msg, success)
             return success, msg
-        if not self.start_cmd:
+        if not self.start_script and not self.start_cmd:
             msg = "No start command configured"
             # Treat as no-op success (acknowledged request)
             _append_event(self.name, "start", msg, True)
@@ -200,20 +344,33 @@ class Service:
         # Prepare environment
         run_env = os.environ.copy()
         run_env.update(self.env)
+        run_env.setdefault("IKAR_SERVICE", self.name)
+        if self.log_path and "LOG_FILE" not in run_env:
+            run_env["LOG_FILE"] = self.log_path
+        if self.pid_file and "PID_FILE" not in run_env:
+            run_env["PID_FILE"] = self.pid_file
+        if self.port and "SERVICE_PORT" not in run_env:
+            run_env["SERVICE_PORT"] = str(self.port)
+        run_env.setdefault("IKAR_SERVICE_PORT", run_env.get("SERVICE_PORT", ""))
 
-        # Substitute environment variables in start_cmd
-        expanded_cmd = os.path.expandvars(self.start_cmd)
-
-        # Run command
-        process = subprocess.run(
-            expanded_cmd,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            cwd=self.workdir,
-            env=run_env
-        )
+        try:
+            if self.start_script:
+                process = self._run_start_script(run_env)
+            else:
+                expanded_cmd = os.path.expandvars(self.start_cmd)
+                process = subprocess.run(
+                    expanded_cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    cwd=self.workdir,
+                    env=run_env
+                )
+        except Exception as exc:
+            msg = f"Start command failed: {exc}"
+            _append_event(self.name, "start", msg, False)
+            return False, msg
 
         success = process.returncode == 0
         output = process.stdout.strip()
@@ -392,23 +549,87 @@ def load_services_from_config(path: Path) -> Dict[str, Service]:
         return {}
 
     for name, attrs in config["services"].items():
+        attrs = attrs or {}
+        meta = attrs.get("meta") or {}
+        runtime = attrs.get("runtime") or {}
+        lifecycle = attrs.get("lifecycle") or {}
+        start_conf = lifecycle.get("start") or {}
+        stop_conf = lifecycle.get("stop") or {}
+        observability = attrs.get("observability") or {}
+
+        detect = attrs.get("detect", [])
+        if isinstance(detect, str):
+            detect = [detect]
+
+        stop_patterns = stop_conf.get("patterns", attrs.get("stop_patterns"))
+        if isinstance(stop_patterns, str):
+            stop_patterns = [stop_patterns]
+        elif not stop_patterns:
+            stop_patterns = []
+
+        env_combined: Dict[str, str] = {}
+        env_combined.update(attrs.get("env") or {})
+        env_combined.update(runtime.get("env") or {})
+        env_combined = {str(k): str(v) for k, v in env_combined.items()}
+
+        start_timeout = _to_float(start_conf.get("timeout", attrs.get("start_timeout")), 8.0)
+        stop_timeout = _to_float(stop_conf.get("timeout", attrs.get("stop_timeout")), 8.0)
+
+        port_val = _to_int(observability.get("port", attrs.get("port")))
+        log_path = observability.get("log_path", attrs.get("log_path"))
+        health = observability.get("health", attrs.get("health", {})) or {}
+
+        pid_file = stop_conf.get("pid_file", attrs.get("pid_file"))
+        workdir = runtime.get("workdir", attrs.get("workdir"))
+        start_shell = runtime.get("shell", start_conf.get("shell"))
+        if isinstance(start_shell, str):
+            start_shell = start_shell.strip()
+
+        links = []
+        for link in meta.get("links", []):
+            if isinstance(link, dict):
+                entry: Dict[str, Any] = {
+                    "label": link.get("label") or link.get("title") or link.get("name") or "Link",
+                }
+                if link.get("kind"):
+                    entry["kind"] = link["kind"]
+                if link.get("description"):
+                    entry["description"] = link["description"]
+                url_template = link.get("url") or link.get("href")
+                if url_template:
+                    entry["url_template"] = url_template
+                links.append(entry)
+            elif isinstance(link, str):
+                links.append({"label": link, "url_template": link})
+
+        tags = meta.get("tags", [])
+        if isinstance(tags, str):
+            tags = [tags]
+        tags = [str(tag) for tag in tags]
+
         is_available = _evaluate_available(attrs.get("available"))
 
         services[name] = Service(
             name=name,
-            detect=attrs.get("detect", []),
+            detect=detect,
             start_cmd=attrs.get("start_cmd"),
-            stop_patterns=attrs.get("stop_patterns"),
-            log_path=attrs.get("log_path"),
-            port=attrs.get("port"),
+            start_script=start_conf.get("script"),
+            start_shell=start_shell,
+            stop_patterns=stop_patterns,
+            log_path=log_path,
+            port=port_val,
             available=is_available,
             systemd_unit=attrs.get("systemd_unit"),
-            pid_file=attrs.get("pid_file"),
-            workdir=attrs.get("workdir"),
-            env=attrs.get("env", {}),
-            start_timeout=attrs.get("start_timeout", 8.0),
-            stop_timeout=attrs.get("stop_timeout", 8.0),
-            health=attrs.get("health", {}),
+            pid_file=pid_file,
+            workdir=workdir,
+            env=env_combined,
+            start_timeout=start_timeout,
+            stop_timeout=stop_timeout,
+            health=health,
+            display_name=meta.get("title") or meta.get("name"),
+            description=meta.get("description"),
+            tags=tags,
+            links=links,
         )
     return services
 
