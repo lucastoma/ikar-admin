@@ -31,6 +31,7 @@ if NUXT_DIR.exists() and any(NUXT_DIR.iterdir()):
 
 
 @router.websocket("/ws/pty")
+@router.websocket("/legacy/ws/pty")
 async def websocket_pty(ws: WebSocket):
     await ws.accept()
 
@@ -212,7 +213,7 @@ def start(request: Request, svc: str, redirect: int = 0):
     # If called from the HTML form, bounce back to dashboard
     want_redirect = redirect or ("text/html" in request.headers.get("accept", ""))
     if want_redirect:
-        return RedirectResponse(url="/ikaros", status_code=303)
+        return RedirectResponse(url="/ikaros/legacy", status_code=303)
     return JSONResponse({"ok": success, "message": msg, "running": s.is_running()})
 
 
@@ -225,17 +226,17 @@ def stop(request: Request, svc: str, redirect: int = 0):
     success, msg = s.stop()
     want_redirect = redirect or ("text/html" in request.headers.get("accept", ""))
     if want_redirect:
-        return RedirectResponse(url="/ikaros", status_code=303)
+        return RedirectResponse(url="/ikaros/legacy", status_code=303)
     return JSONResponse({"ok": success, "message": msg, "running": s.is_running()})
 
 
 def _render_page(title: str, content: str, current_path: str, services: dict = None):
     nav_links = {
-        "/ikaros": "Connect",
-        "/ikaros/terminal": "Terminal",
-        "/ikaros/logs": "Logs",
-        "/ikaros/env": "Env",
-        "/ikaros/comfy": "Comfy",
+        "/ikaros/legacy": "Connect",
+        "/ikaros/legacy/terminal": "Terminal",
+        "/ikaros/legacy/logs": "Logs",
+        "/ikaros/legacy/env": "Env",
+        "/ikaros/legacy/comfy": "Comfy",
     }
     nav_html = "".join(
         f"<a href='{path}' class='{'active' if path == current_path else ''}'>{name}</a>"
@@ -389,8 +390,14 @@ def _render_page(title: str, content: str, current_path: str, services: dict = N
     """
     return HTMLResponse(html)
 
-@router.get("/")
-def index(request: Request):
+@router.get("", include_in_schema=False)
+@router.get("/", include_in_schema=False)
+def _redirect_to_new_ui():
+    return RedirectResponse(url="/ikaros/ui/", status_code=307)
+
+
+@router.get("/legacy", include_in_schema=False)
+def legacy_index(request: Request):
     services = sm.load_services_from_config(sm.CONFIG_PATH)
     rows = []
     for name, svc in services.items():
@@ -506,8 +513,8 @@ def index(request: Request):
     return _render_page("Connect", content, str(request.url.path), services)
 
 
-@router.get("/terminal")
-def terminal(request: Request):
+@router.get("/legacy/terminal", include_in_schema=False)
+def legacy_terminal(request: Request):
     content = """
         <h2>Web Terminal</h2>
         <div id="terminal-container"></div>
@@ -546,7 +553,7 @@ def terminal(request: Request):
             fitTerminal();
 
             const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
-            const wsUrl = `${wsProtocol}://${location.host}/ikaros/ws/pty`;
+            const wsUrl = `${wsProtocol}://${location.host}/ikaros/legacy/ws/pty`;
             const ws = new WebSocket(wsUrl);
 
             ws.onopen = () => {
@@ -587,8 +594,8 @@ def terminal(request: Request):
     return _render_page("Terminal", content, str(request.url.path))
 
 
-@router.get("/logs")
-def logs(request: Request):
+@router.get("/legacy/logs", include_in_schema=False)
+def legacy_logs(request: Request):
     services = sm.load_services_from_config(sm.CONFIG_PATH)
     service_options = "".join(f"<option value='{name}'>{name}</option>" for name in services.keys())
 
@@ -656,8 +663,8 @@ def logs(request: Request):
 ## Router include moved to end of file after all route definitions
 
 
-@router.get("/env")
-def env_page(request: Request):
+@router.get("/legacy/env", include_in_schema=False)
+def legacy_env_page(request: Request):
     content = """
         <h2>Environment</h2>
         <div style='margin:8px 0;'>
@@ -844,8 +851,8 @@ def _ensure_comfy_config() -> tuple[str, dict]:
     return config_path, data
 
 
-@router.get("/comfy")
-def comfy_page(request: Request):
+@router.get("/legacy/comfy", include_in_schema=False)
+def legacy_comfy_page(request: Request):
     content = """
         <h2>Comfy Config</h2>
         <div id='meta' style='font-size:0.9em;color:#8b949e;'></div>
