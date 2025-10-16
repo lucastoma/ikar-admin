@@ -13,8 +13,9 @@ export IKAR_ADMIN_PORT=${IKAR_ADMIN_PORT:-8610}
 # Load optional environment files (export all)
 set +a
 for ENV_FILE in \
-  "/workspace/pod_config_ikarosopolis/.env" \
-  "/workspace/.env"; do
+  "/workspace/.env" \
+  "/workspace/ikar_apps/ikar-admin/.env" \
+  "/workspace/pod_config_ikarosopolis/.env"; do
   if [ -f "$ENV_FILE" ]; then
     set -a
     # shellcheck disable=SC1090

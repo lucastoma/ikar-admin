@@ -123,3 +123,6 @@ Thumbs.db
 /npm_output.log
 jules-scratch/
 app/static/nuxt/
+
+
+.history
