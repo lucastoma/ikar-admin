@@ -46,7 +46,38 @@ Run locally
    - Bootstrap deps into the interpreter: `IKAR_ADMIN_BOOTSTRAP=1 .../run.sh`
    - Allow install into externally-managed Python: add `IKAR_ADMIN_PIP_BREAK=1`
    - Force dedicated venv: `IKAR_ADMIN_USE_VENV=1 IKAR_ADMIN_BOOTSTRAP=1 .../run.sh`
-3) Browse to `http://127.0.0.1:8610/ikaros`
+   - **Development mode** (port 8621, no service conflicts): `bash /workspace/ikar_apps/ikar-admin/run_dev_8621.sh`
+3) Browse to:
+   - Production: `http://127.0.0.1:8610/ikaros`
+   - Development: `http://127.0.0.1:8621/ikaros`
+
+Service Management (systemd)
+- Install/restart service with updated symlink: `bash /workspace/ikar_apps/ikar-admin/restart_service.sh`
+- Stop service and disable autorestart: `bash /workspace/ikar_apps/ikar-admin/stop_service.sh`
+
+Systemd Service Installation
+1) Manual installation (one-time setup):
+   ```bash
+   sudo ln -sf /workspace/ikar_apps/ikar-admin/systemd/ikar-admin.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable ikar-admin.service
+   ```
+
+2) Or use the restart script (handles symlink creation):
+   ```bash
+   sudo /workspace/ikar_apps/ikar-admin/restart_service.sh
+   ```
+
+3) Check service status:
+   ```bash
+   sudo systemctl status ikar-admin.service
+   ```
+
+Service Configuration
+- **User**: Runs as `dev` user
+- **Auto-restart**: Always restarts on failure (2 second delay)
+- **Working Directory**: `/workspace/ikar_apps/ikar-admin`
+- **Environment**: Includes default ports for ComfyUI (18188), FileBrowser (8085), Code Server (8445)
 
 Tests
 - Quick run (reuses interpreter): `bash /workspace/ikar_apps/ikar-admin/run_tests.sh`
@@ -60,8 +91,23 @@ Tests
   - Event/log tail endpoints
   - Availability expression evaluator
 
+Available Scripts
+- **`run.sh`** - Main startup script with environment loading and workspace setup (port 8610)
+- **`run_dev_8621.sh`** - Development mode with fixed port 8621 (no service conflicts)
+- **`run_tests.sh`** - Test runner with optional venv and dependency bootstrap
+- **`restart_service.sh`** - Service management with symlink refresh and status display
+- **`stop_service.sh`** - Proper service shutdown with autorestart disabled
+- **`stop_dev_8621.sh`** - Stop development server running on port 8621
+
 CLI helper
 - `/workspace/bin/podctl` wraps the API (`status`, `start`, `stop`, `logs`).
+
+Environment Configuration
+- The application loads environment variables from `.env` files in order of priority:
+  1. `/workspace/.env` (lowest priority)
+  2. `/workspace/ikar_apps/ikar-admin/.env` (medium priority)
+  3. `/workspace/pod_config_ikarosopolis/.env` (highest priority - overrides others)
+- Later files override variables from earlier files, allowing flexible configuration per environment.
 
 Data layout & Comfy helpers
 - `DATA_DIR` (default `/workspace/data`) stores Comfy assets (`models/`, `assets/`, `flows/`, `nodes/`).
@@ -125,6 +171,9 @@ The backend injects a few convenience environment variables while running start 
 `IKAR_SERVICE`, `SERVICE_PORT`, `IKAR_SERVICE_PORT`, `LOG_FILE`, and `PID_FILE` (when known).
 
 For a deeper schema reference and API payload examples see `doc/service_config_schema.md`.
+
+Additional Documentation
+- **`ANALYSIS_REPORT.md`** - Comprehensive technical analysis of the application architecture, features, and security considerations
 
 Notes
 - code-server detection prefers the local binary at `/workspace/code-server` before falling back to `PATH`.
