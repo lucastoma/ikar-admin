@@ -8,7 +8,7 @@ services:
         - label: "Open UI"
           url: "http://localhost:{port}/"
     runtime:
-      workdir: "/workspace/ComfyUI"
+      workdir: "/workspace/comfyui"
       env:
         CUDA_VISIBLE_DEVICES: ""
       shell: "/usr/bin/env bash"
@@ -18,7 +18,7 @@ services:
           #!/usr/bin/env bash
           set -euo pipefail
 
-          DATA_DIR=${DATA_DIR:-/workspace/data}
+          DATA_DIR=${DATA_DIR:-/workspace/ikar_data}
           MODELS_DIR=${MODELS_DIR:-${DATA_DIR}/models}
           ASSETS_DIR=${ASSETS_DIR:-${DATA_DIR}/assets}
           FLOWS_DIR=${FLOWS_DIR:-${DATA_DIR}/flows}
@@ -52,12 +52,12 @@ services:
             YAML
           fi
 
-          ln -sf "$COMFYUI_CONFIG_FILE" /workspace/ComfyUI/extra_model_paths.yaml
+          ln -sf "$COMFYUI_CONFIG_FILE" /workspace/comfyui/extra_model_paths.yaml
           touch "$LOG_FILE"
 
           PYTHONPATH="/home/dev/.local/lib/python3.12/site-packages:${PYTHONPATH:-}" \
           CUDA_VISIBLE_DEVICES='' \
-          nohup /usr/local/bin/python /workspace/ComfyUI/main.py \
+          nohup /usr/local/bin/python /workspace/comfyui/main.py \
             --listen 0.0.0.0 --port "${PORT}" --cpu \
             >> "${LOG_FILE}" 2>&1 &
           echo $! > "${PID_FILE}"
@@ -65,7 +65,7 @@ services:
       stop:
         pid_file: "/workspace/comfyui.pid"
         patterns:
-          - "ComfyUI/main.py"
+          - "comfyui/main.py"
         timeout: 12.0
     observability:
       log_path: "/workspace/comfyui.log"
@@ -75,9 +75,9 @@ services:
           url: "http://127.0.0.1:${COMFYUI_PORT:-18188}/"
           timeout: 5
     detect:
-      - "ComfyUI/main.py"
-      - "python .*ComfyUI/main.py"
-    available: "exists('/workspace/ComfyUI/main.py')"
+      - "comfyui/main.py"
+      - "python .*comfyui/main.py"
+    available: "exists('/workspace/comfyui/main.py')"
     systemd_unit: "comfyui-ikar"
 
   code:

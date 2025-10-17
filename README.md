@@ -110,7 +110,7 @@ Environment Configuration
 - Later files override variables from earlier files, allowing flexible configuration per environment.
 
 Data layout & Comfy helpers
-- `DATA_DIR` (default `/workspace/data`) stores Comfy assets (`models/`, `assets/`, `flows/`, `nodes/`).
+- `DATA_DIR` (default `/workspace/ikar_data`) stores Comfy assets (`models/`, `assets/`, `flows/`, `nodes/`).
 - `pod_config_ikarosopolis/scripts/setup_data_layout.sh` prepares directories and generates `extra_model_paths.yaml`.
 - `/ikaros/comfy` lets you inspect the effective YAML, validate directories, and reinstall the symlink into `ComfyUI/extra_model_paths.yaml`.
 
@@ -129,7 +129,7 @@ services:
         - label: "Open UI"
           url: "http://localhost:{port}/"
     runtime:
-      workdir: "/workspace/ComfyUI"
+      workdir: "/workspace/comfyui"
       env:
         CUDA_VISIBLE_DEVICES: ""
       shell: "/usr/bin/env bash"
@@ -156,7 +156,7 @@ services:
     detect:
       - "ComfyUI/main.py"
       - "python .*ComfyUI/main.py"
-    available: "exists('/workspace/ComfyUI/main.py')"
+    available: "exists('/workspace/comfyui/main.py')"
     systemd_unit: "comfyui-ikar"
 ```
 

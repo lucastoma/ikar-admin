@@ -802,10 +802,117 @@ def env_json(prefix: str = ""):
     out = {k: v for k, v in os.environ.items() if want(k)}
     return JSONResponse(out)
 
+
+# --- ENV management (update & restart) --- #
+
+_ENV_WHITELIST = {
+    "IKAR_REPO", "IKAR_DATA", "EXTERNAL_DATA", "COMFY_DIR", "HUGGINGFACE_TOKEN",
+    "IKAR_MANAGER_API_HOST", "IKAR_MANAGER_API_PORT", "IKAR_MANAGER_UI_HOST", "IKAR_MANAGER_UI_PORT",
+    "UVICORN_HOST", "UVICORN_PORT", "FRONTEND_HOST", "FRONTEND_PORT",
+    "RCLONE_REMOTE", "MOUNT_POINT", "RC_ADDR", "IKAR_ADMIN_PORT",
+}
+
+
+def _read_env_file(path: Path) -> dict:
+    data = {}
+    if not path.exists():
+        return data
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("\"'\")
+                    data[k] = v
+    except OSError:
+        pass
+    return data
+
+
+def _write_env_file(path: Path, updates: dict) -> None:
+    # preserve non-updated lines; update or append whitelisted keys
+    original = []
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                original = fh.readlines()
+        except OSError:
+            original = []
+    existing = _read_env_file(path)
+    existing.update({k: v for k, v in updates.items() if k in _ENV_WHITELIST and v is not None and str(v).lower() != "null" and str(v) != ""})
+    # rebuild file
+    seen = set()
+    lines_out = []
+    for line in original:
+        if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
+            lines_out.append(line)
+            continue
+        k, _ = line.split("=", 1)
+        k = k.strip()
+        if k in existing and k in _ENV_WHITELIST and k not in seen:
+            lines_out.append(f"{k}={existing[k]}\n")
+            seen.add(k)
+        elif k not in _ENV_WHITELIST:
+            lines_out.append(line)
+    # append missing keys
+    for k, v in existing.items():
+        if k in _ENV_WHITELIST and k not in seen:
+            lines_out.append(f"{k}={v}\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.writelines(lines_out)
+    tmp.replace(path)
+
+
+@router.post("/env/update")
+async def env_update(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    updates = body.get("updates") or {}
+    target = body.get("target") or "global"
+    restart = body.get("restart") or []
+
+    if target not in {"global", "local"}:
+        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+
+    global_env = Path("/workspace/pod_config_ikarosopolis/.env")
+    local_env = Path(__file__).resolve().parent.parent / ".env"
+    path = global_env if target == "global" else local_env
+
+    # backup
+    try:
+        if path.exists():
+            ts = time.strftime("%Y%m%dT%H%M%S")
+            backup = path.with_suffix(f".bak_{ts}")
+            _shutil.copy2(path, backup)
+    except Exception:
+        pass
+
+    _write_env_file(path, updates)
+
+    # restart requested units
+    restarted = []
+    for unit in restart:
+        if not unit or not isinstance(unit, str):
+            continue
+        if sm.shutil.which("systemctl"):
+            out = sm._run(f"sudo -n systemctl restart {unit}")
+            if out.returncode == 0:
+                restarted.append(unit)
+
+    return JSONResponse({"ok": True, "updated": list(updates.keys()), "target": target, "restarted": restarted})
+
 # ---------------- Comfy Config Panel ---------------- #
 
 def _paths_default_models() -> dict:
-    data_dir = _expand_path(os.environ.get("DATA_DIR", "/workspace/data")) or "/workspace/data"
+    data_dir = _expand_path(os.environ.get("DATA_DIR", "/workspace/ikar_data")) or "/workspace/ikar_data"
     m = os.path.join(data_dir, "models")
     return {
         "checkpoints": [f"{m}/checkpoints"],
@@ -823,7 +930,7 @@ def _paths_default_models() -> dict:
 
 
 def _ensure_comfy_config() -> tuple[str, dict]:
-    data_dir = _expand_path(os.environ.get("DATA_DIR", "/workspace/data")) or "/workspace/data"
+    data_dir = _expand_path(os.environ.get("DATA_DIR", "/workspace/ikar_data")) or "/workspace/ikar_data"
     default_path = os.path.join(data_dir, "extra_model_paths.yaml")
     config_raw = os.environ.get("COMFYUI_CONFIG_FILE") or default_path
     config_path = _expand_path(config_raw) or default_path
@@ -837,9 +944,9 @@ def _ensure_comfy_config() -> tuple[str, dict]:
     except Exception:
         data = {}
     # Ensure symlink into ComfyUI directory (best effort)
-    comfy_link = "/workspace/ComfyUI/extra_model_paths.yaml"
+    comfy_link = "/workspace/comfyui/extra_model_paths.yaml"
     try:
-        if os.path.isdir("/workspace/ComfyUI"):
+        if os.path.isdir("/workspace/comfyui"):
             if os.path.islink(comfy_link) or os.path.exists(comfy_link):
                 try:
                     os.remove(comfy_link)
